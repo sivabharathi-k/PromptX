@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Data (runtime generated)
+backend/data/uploads/*.db
+backend/data/uploads/*.csv
+backend/data/exports/*.xlsx
+backend/data/logs/*.log
+backend/data/sessions/*
+!backend/data/sessions/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

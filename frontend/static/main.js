@@ -1,0 +1,1523 @@
+/* ═══════════════════════════════════════════════════════════════
+   STATE
+════════════════════════════════════════════════════════════════ */
+const state = {
+  uploaded:    false,
+  querying:    false,
+  dataset:     { name: '', rows: 0, columns: [] },
+  chartMap:    {},   // id -> Chart instance
+  tableData:   {},   // msgId -> { columns, allRows, page, sql }
+  sidebarOpen: true,
+  lastSQL:     '',
+  // Viz modal state
+  vizModal:    { msgId: null, chart: null },
+};
+
+const PAGE_SIZE = 20;
+
+/* ═══════════════════════════════════════════════════════════════
+   DOM REFS
+════════════════════════════════════════════════════════════════ */
+const uploadScreen      = document.getElementById('uploadScreen');
+const chatScreen        = document.getElementById('chatScreen');
+const uploadZone        = document.getElementById('uploadZone');
+const fileInput         = document.getElementById('fileInput');
+const uploadIconEl      = document.getElementById('uploadIconEl');
+const uploadTitleEl     = document.getElementById('uploadTitleEl');
+const uploadHintEl      = document.getElementById('uploadHintEl');
+const uploadError       = document.getElementById('uploadError');
+
+const datasetName       = document.getElementById('datasetName');
+const datasetMeta       = document.getElementById('datasetMeta');
+const sidebarToggle     = document.getElementById('sidebarToggle');
+const newChatBtn        = document.getElementById('newChatBtn');
+const chatMain          = document.getElementById('chatMain');
+const emptyState        = document.getElementById('emptyState');
+const messagesContainer = document.getElementById('messagesContainer');
+const chatSidebar       = document.getElementById('chatSidebar');
+const sidebarClose      = document.getElementById('sidebarClose');
+const sbFileName        = document.getElementById('sbFileName');
+const sbDimensions      = document.getElementById('sbDimensions');
+const sbColumns         = document.getElementById('sbColumns');
+const datasetOverview   = document.getElementById('datasetOverview');
+
+const inputBarWrap      = document.querySelector('.input-bar-wrap');
+const chatInput         = document.getElementById('chatInput');
+const sendBtn           = document.getElementById('sendBtn');
+
+// Viz modal elements
+const vizModal          = document.getElementById('vizModal');
+const vizModalClose     = document.getElementById('vizModalClose');
+const vizChartTypeGrid  = document.getElementById('vizChartTypeGrid');
+const vizXAxis          = document.getElementById('vizXAxis');
+const vizYAxis          = document.getElementById('vizYAxis');
+const vizAggRow         = document.getElementById('vizAggRow');
+const vizGenerateBtn    = document.getElementById('vizGenerateBtn');
+const vizPreviewEmpty   = document.getElementById('vizPreviewEmpty');
+const vizPreviewChart   = document.getElementById('vizPreviewChart');
+const vizModalCanvas    = document.getElementById('vizModalCanvas');
+const vizAIRec          = document.getElementById('vizAIRec');
+const vizAIRecText      = document.getElementById('vizAIRecText');
+const vizRecChips       = document.getElementById('vizRecChips');
+
+/* ═══════════════════════════════════════════════════════════════
+   UPLOAD
+════════════════════════════════════════════════════════════════ */
+uploadZone.addEventListener('click', (e) => {
+  if (e.target !== fileInput) fileInput.click();
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) doUpload(fileInput.files[0]);
+});
+uploadZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  uploadZone.classList.add('dragover');
+});
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) doUpload(f);
+});
+
+async function doUpload(file) {
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    showUploadError('Only CSV files are supported.');
+    return;
+  }
+  uploadError.style.display = 'none';
+  uploadZone.classList.add('uploading');
+  uploadIconEl.innerHTML = iconSpinner();
+  uploadTitleEl.textContent = 'Uploading…';
+  uploadHintEl.textContent  = file.name;
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  try {
+    const res  = await fetch('/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) { showUploadError(data.error || 'Upload failed.'); return; }
+
+    state.dataset = { name: file.name, rows: data.rows, columns: data.columns };
+    state.uploaded = true;
+
+    uploadZone.classList.remove('uploading');
+    uploadZone.classList.add('success');
+  uploadIconEl.innerHTML = iconCheck();
+    uploadTitleEl.textContent = `${file.name} uploaded!`;
+    uploadHintEl.textContent  = `${data.rows.toLocaleString()} rows · ${data.columns.length} columns`;
+
+    setTimeout(() => transitionToChat(data), 800);
+
+  } catch {
+    showUploadError('Upload failed. Please check your connection.');
+    uploadZone.classList.remove('uploading');
+    uploadIconEl.innerHTML = iconFolder();
+    uploadTitleEl.textContent = 'Drag & drop your dataset here';
+    uploadHintEl.textContent  = 'or click to browse';
+  }
+}
+
+function showUploadError(msg) {
+  uploadError.textContent = msg;
+  uploadError.style.display = 'block';
+  uploadZone.classList.remove('uploading', 'success');
+  uploadIconEl.innerHTML = iconFolder();
+  uploadTitleEl.textContent = 'Drag & drop your dataset here';
+  uploadHintEl.textContent  = 'or click to browse';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TRANSITION UPLOAD → CHAT
+════════════════════════════════════════════════════════════════ */
+function transitionToChat(data) {
+  datasetName.textContent = state.dataset.name;
+  datasetMeta.textContent = `${data.rows.toLocaleString()} rows · ${data.columns.length} cols`;
+
+  sbFileName.textContent   = state.dataset.name;
+  sbDimensions.textContent = `${data.rows.toLocaleString()} rows × ${data.columns.length} columns`;
+  buildSidebarColumns(data.columns);
+
+  // Dataset Overview Banner
+  populateOverview(data);
+
+  uploadScreen.style.display = 'none';
+  chatScreen.style.display   = 'flex';
+  inputBarWrap.classList.add('visible');
+  chatInput.focus();
+}
+
+function populateOverview(data) {
+  // Keep Phase-1/2 behavior stable — overview is still controlled by existing upload response.
+
+  const cols = data.columns || [];
+  const numericHints = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio/;
+  const dateHints    = /date|time|year|month|day|period|created|updated/;
+
+  const numCols = cols.filter(c => numericHints.test(c.toLowerCase()));
+  const catCols = cols.filter(c => !numericHints.test(c.toLowerCase()) && !dateHints.test(c.toLowerCase()));
+
+  document.getElementById('ovRows').textContent    = data.rows.toLocaleString();
+  document.getElementById('ovCols').textContent    = cols.length;
+  document.getElementById('ovNumCols').textContent = numCols.length;
+  document.getElementById('ovCatCols').textContent = catCols.length;
+
+  datasetOverview.style.display = 'block';
+}
+
+function buildSidebarColumns(cols) {
+  sbColumns.innerHTML = '';
+  cols.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'sb-col-item';
+    const lc = c.toLowerCase();
+    let typeClass = 'type-text', typeLabel = 'TEXT';
+    if (/\bid\b|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate/.test(lc)) {
+      typeClass = 'type-num'; typeLabel = 'NUM';
+    } else if (/date|time|year|month|day|period|created|updated/.test(lc)) {
+      typeClass = 'type-date'; typeLabel = 'DATE';
+    }
+    div.innerHTML = `
+      <span class="sb-col-name" title="${escHtml(c)}">${escHtml(c)}</span>
+      <span class="sb-col-type ${typeClass}">${typeLabel}</span>
+    `;
+    sbColumns.appendChild(div);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NEW CHAT / RESET
+════════════════════════════════════════════════════════════════ */
+newChatBtn.addEventListener('click', () => {
+  Object.values(state.chartMap).forEach(c => c && c.destroy && c.destroy());
+  if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
+  state.chartMap = {};
+  state.tableData = {};
+  state.uploaded = false;
+  state.lastSQL  = '';
+
+  messagesContainer.innerHTML = '';
+  emptyState.style.display = 'block';
+  datasetOverview.style.display = 'none';
+  inputBarWrap.classList.remove('visible');
+  chatScreen.style.display = 'none';
+  uploadScreen.style.display = 'flex';
+
+  uploadZone.classList.remove('success', 'uploading', 'dragover');
+  uploadIconEl.innerHTML = iconFolder();
+  uploadTitleEl.textContent = 'Drag & drop your dataset here';
+  uploadHintEl.textContent  = 'or click to browse';
+  uploadError.style.display = 'none';
+  fileInput.value = '';
+  closeVizModal();
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR TOGGLE
+════════════════════════════════════════════════════════════════ */
+sidebarToggle.addEventListener('click', toggleSidebar);
+sidebarClose.addEventListener('click', toggleSidebar);
+
+function toggleSidebar() {
+  state.sidebarOpen = !state.sidebarOpen;
+  chatSidebar.classList.toggle('hidden', !state.sidebarOpen);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SUGGESTION CHIPS
+════════════════════════════════════════════════════════════════ */
+document.getElementById('suggestionGrid').addEventListener('click', (e) => {
+  const btn = e.target.closest('.suggestion-btn');
+  if (!btn) return;
+  const q = btn.dataset.q;
+  if (q) sendMessage(q);
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   INPUT BAR
+════════════════════════════════════════════════════════════════ */
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + 'px';
+  sendBtn.disabled = chatInput.value.trim() === '';
+});
+
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!sendBtn.disabled && !state.querying) sendMessage(chatInput.value.trim());
+  }
+});
+
+sendBtn.addEventListener('click', () => {
+  if (!state.querying) sendMessage(chatInput.value.trim());
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   AI INSIGHTS (dedicated endpoint)
+════════════════════════════════════════════════════════════════ */
+async function loadInsights() {
+  if (!state.uploaded) return;
+
+
+  emptyState.style.display = 'none';
+  messagesContainer.innerHTML = '';
+
+  const loadingId = 'ins-load-' + Date.now();
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai msg-loading';
+  row.id = loadingId;
+  row.innerHTML = `
+    <div class="msg-ai-wrap">
+      <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
+      <div class="msg-ai-card">
+        <div class="loading-dots"><span></span><span></span><span></span></div>
+        <div class="loading-text">Generating executive insights…</div>
+      </div>
+    </div>`;
+  messagesContainer.appendChild(row);
+  scrollToBottom();
+
+  try {
+    const res = await fetch('/insights', { method: 'POST' });
+    const data = await res.json();
+    removeMsg(loadingId);
+
+    if (!res.ok) {
+      appendErrorMsg(data.error || 'Insights generation failed.');
+      return;
+    }
+
+    renderInsightsCards(data.insights || data || []);
+
+    scrollToBottom();
+  } catch (e) {
+    removeMsg(loadingId);
+    appendErrorMsg('Could not reach the server for insights.');
+  }
+}
+
+function insightImpactRank(impact) {
+  const v = (impact || '').toUpperCase();
+  if (v === 'HIGH') return 3;
+  if (v === 'MEDIUM') return 2;
+  return 1;
+}
+
+function renderInsightsCards(insights) {
+  // Backwards/forwards compatible: allow {insights:[...]} or raw array
+  if (!Array.isArray(insights) && insights && typeof insights === 'object' && Array.isArray(insights.insights)) {
+    insights = insights.insights;
+  }
+
+  if (!Array.isArray(insights) || !insights.length) {
+
+    messagesContainer.innerHTML = '';
+    appendErrorMsg('No insights available.');
+    return;
+  }
+
+  const sorted = [...insights].sort((a,b) => insightImpactRank(b.impact) - insightImpactRank(a.impact));
+
+  const container = document.createElement('div');
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.gap = '16px';
+
+  sorted.forEach((ins, idx) => {
+    const cardId = `ins-card-${Date.now()}-${idx}`;
+    const impact = (ins.impact || 'LOW').toUpperCase();
+
+    const badgeColor = impact === 'HIGH'
+      ? '#16A34A'
+      : impact === 'MEDIUM'
+        ? '#F59E0B'
+        : '#94A3B8';
+
+    const evidenceText = formatEvidence(ins.evidence);
+
+    const card = document.createElement('div');
+    card.className = 'insight-card';
+    card.id = cardId;
+    card.innerHTML = `
+      <div class="insight-card-header">
+        <span class="insight-badge" style="background:${badgeColor}; color:#fff">${impact}</span>
+        <span class="insight-confidence">Confidence: ${(ins.confidence || 'MEDIUM').toUpperCase()}</span>
+      </div>
+      <div class="insight-title">${escHtml(ins.title || '')}</div>
+      <div class="insight-summary">${escHtml(ins.summary || '')}</div>
+
+      <div class="insight-metric-row">
+        ${ins.metric === null || typeof ins.metric === 'undefined' ? '' : `<span class="insight-metric">Metric: ${escHtml(String(ins.metric))}</span>`}
+      </div>
+
+      <div class="insight-chart-wrap">
+        <canvas id="${cardId}-chart"></canvas>
+      </div>
+
+      <div class="insight-evidence">
+        <div class="insight-evidence-label">Evidence</div>
+        <div class="insight-evidence-text">${evidenceText}</div>
+      </div>
+
+      <div class="insight-recommendation">
+        <div class="insight-reco-label">Recommendation</div>
+        <div class="insight-reco-text">${escHtml(ins.recommendation || '')}</div>
+      </div>
+
+      <div class="insight-actions">
+        <button class="toolbar-btn toolbar-btn-primary" onclick="viewInsightDetail(${JSON.stringify(ins)});">View Insight →</button>
+      </div>
+    `;
+
+    container.appendChild(card);
+
+    // Render chart (best-effort)
+    requestAnimationFrame(() => {
+      try {
+        const spec = insightChartSpec(ins);
+        if (spec) renderChartInMsg(cardId + '-tmp', spec, cardId + '-chart');
+      } catch {}
+    });
+  });
+
+  messagesContainer.innerHTML = '';
+  messagesContainer.appendChild(container);
+}
+
+function formatEvidence(evidence) {
+  if (!evidence) return '—';
+  if (typeof evidence === 'string') return escHtml(evidence);
+  try {
+    const entries = Object.entries(evidence).slice(0, 5);
+    if (!entries.length) return '—';
+    return entries.map(([k,v]) => `${escHtml(k)}: ${escHtml(String(v))}`).join('<br>');
+  } catch {
+    return '—';
+  }
+}
+
+function insightChartSpec(ins) {
+  const ct = (ins.chart_type || 'bar').toLowerCase();
+  const cd = ins.chart_data || {};
+
+  // Support 2 formats:
+  // 1) {labels:[], series:[{data:[]}] } style similar to existing spec
+  // 2) scatter points: {points:[{x,y},...]}
+
+  if (ct === 'scatter') {
+    const pts = cd.points || cd.scatter || [];
+    const series = [{ label: 'Data', data: (pts || []).map(p => ({ x: Number(p.x), y: Number(p.y) })) }];
+    return {
+      plotType: 'scatter',
+      title: ins.title || 'Insight',
+      xLabel: 'x',
+      yLabel: 'y',
+      series,
+    };
+  }
+
+  const labels = cd.labels || [];
+  const series = (cd.series && cd.series[0]) ? cd.series[0] : (cd.series || null);
+  const data = (series && series.data) ? series.data : (cd.data || []);
+
+  // If labels/data are missing, fallback placeholder
+  if (!Array.isArray(labels) || !labels.length || !Array.isArray(data) || !data.length) {
+    return {
+      plotType: 'bar',
+      title: ins.title || 'Insight',
+      xLabel: 'Category',
+      yLabel: 'Value',
+      labels: ['—'],
+      series: [{ label: 'Value', data: [0], labels: ['—'] }]
+    };
+  }
+
+  const mappedPlot = ct === 'line' ? 'line'
+    : ct === 'area' ? 'area'
+    : ct === 'histogram' ? 'bar'
+    : ct === 'pie' ? 'pie'
+    : ct === 'donut' ? 'donut'
+    : 'bar';
+
+  return {
+    plotType: mappedPlot,
+    title: ins.title || 'Insight',
+    xLabel: 'Category',
+    yLabel: 'Value',
+    labels,
+    series: [{ label: ins.summary ? 'Value' : 'Value', data, labels }]
+  };
+}
+
+function viewInsightDetail(insight) {
+  // Simple drill-down using an alert-like modal inside chat.
+  // Premium UI refinement can be added later; this unblocks the architecture.
+  const modalId = 'ins-detail-modal';
+  const existing = document.getElementById(modalId);
+  if (existing) existing.remove();
+
+  const impact = (insight.impact || 'LOW').toUpperCase();
+  const badgeColor = impact === 'HIGH' ? '#16A34A' : impact === 'MEDIUM' ? '#F59E0B' : '#94A3B8';
+
+  const overlay = document.createElement('div');
+  overlay.id = modalId;
+  overlay.style.position = 'fixed';
+  overlay.style.inset = '0';
+  overlay.style.background = 'rgba(0,0,0,0.45)';
+  overlay.style.zIndex = '2000';
+  overlay.style.display = 'flex';
+  overlay.style.alignItems = 'center';
+  overlay.style.justifyContent = 'center';
+  overlay.style.padding = '20px';
+
+  const title = escHtml(insight.title || 'Insight');
+  const summary = escHtml(insight.summary || '');
+  const reco = escHtml(insight.recommendation || '');
+  const evidence = formatEvidence(insight.evidence);
+
+  overlay.innerHTML = `
+    <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 16px; width: 100%; max-width: 860px; max-height: 90vh; overflow: auto; padding: 18px;">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="background:${badgeColor}; color:#fff; padding:3px 10px; border-radius:999px; font-weight:700; font-size:12px;">${impact}</span>
+            <div style="font-weight:700; font-size:18px;">${title}</div>
+          </div>
+          <div style="margin-top:6px; color: var(--text-muted); font-size:12px;">Generated: ${new Date().toLocaleString()}</div>
+          <div style="margin-top:10px; color: var(--text); font-size:14px;">${summary}</div>
+          <div style="margin-top:10px; display:flex; gap:14px; flex-wrap:wrap;">
+            <div><b>Confidence:</b> ${(insight.confidence || 'MEDIUM').toUpperCase()}</div>
+            <div><b>Chart:</b> ${escHtml(insight.chart_type || 'bar')}</div>
+          </div>
+        </div>
+        <button class="viz-modal-close" id="${modalId}-close" style="height:32px;">✕</button>
+      </div>
+
+      <div style="height:12px;"></div>
+
+      <div style="border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--bg-secondary);">
+        <div style="font-weight:700; text-transform:uppercase; letter-spacing:0.4px; font-size:12px; color: var(--text-muted); margin-bottom:8px;">Visualization</div>
+        <canvas id="${modalId}-canvas" style="max-height: 320px;"></canvas>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+        <div style="border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--bg-secondary);">
+          <div style="font-weight:700; text-transform:uppercase; letter-spacing:0.4px; font-size:12px; color: var(--text-muted); margin-bottom:8px;">Evidence</div>
+          <div style="font-size:13px; color: var(--text-mid);">${evidence}</div>
+        </div>
+        <div style="border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--bg-secondary);">
+          <div style="font-weight:700; text-transform:uppercase; letter-spacing:0.4px; font-size:12px; color: var(--text-muted); margin-bottom:8px;">Recommendation</div>
+          <div style="font-size:13px; color: var(--text-mid);">${reco}</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap;">
+        <button class="toolbar-btn" onclick="alert('View Data is not implemented yet.');">View Data</button>
+        <button class="toolbar-btn" onclick="alert('View Calculation is not implemented yet.');">View Calculation</button>
+        <button class="toolbar-btn" onclick="alert('Export Insight is not implemented yet.');">Export Insight</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  document.getElementById(`${modalId}-close`).addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  requestAnimationFrame(() => {
+    try {
+      const spec = insightChartSpec(insight);
+      const tmpId = modalId + '-chart';
+      renderChartInMsg(tmpId, spec, `${modalId}-canvas`);
+    } catch {}
+  });
+}
+
+
+// Theme toggle
+const themeToggle = document.getElementById('themeToggle');
+const themeToggleUpload = document.getElementById('themeToggleUpload');
+function toggleTheme(){
+  const body = document.body;
+  const curr = body.getAttribute('data-theme') || 'light';
+  const next = curr === 'dark' ? 'light' : 'dark';
+  body.setAttribute('data-theme', next);
+  try { localStorage.setItem('theme', next); } catch {}
+}
+
+if (themeToggle) themeToggle.addEventListener('click', toggleTheme);
+if (themeToggleUpload) themeToggleUpload.addEventListener('click', toggleTheme);
+
+try {
+  const saved = localStorage.getItem('theme');
+  if (saved === 'dark' || saved === 'light') document.body.setAttribute('data-theme', saved);
+} catch {}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   SEND MESSAGE
+════════════════════════════════════════════════════════════════ */
+async function sendMessage(text) {
+  if (!text || state.querying || !state.uploaded) return;
+
+  // Hide empty state and overview on first question
+  emptyState.style.display = 'none';
+
+  appendUserMsg(text);
+
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
+  sendBtn.disabled = true;
+  state.querying = true;
+
+  const loadingId = appendLoadingMsg();
+
+  try {
+    const res  = await fetch('/query', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ question: text }),
+    });
+    const data = await res.json();
+
+    removeMsg(loadingId);
+
+    if (!res.ok) {
+      appendErrorMsg(data.error || 'Query failed. Please try again.');
+      return;
+    }
+
+    if (data.type === 'delete_confirm') {
+      appendConfirmMsg(data.message);
+      return;
+    }
+
+    if (data.type === 'irrelevant') {
+      appendIrrelevantMsg(data.message, data.suggestions || []);
+      return;
+    }
+
+    appendAIMsg(data, text);
+
+  } catch (err) {
+    removeMsg(loadingId);
+    appendErrorMsg('Could not reach the server. Please check your connection.');
+    console.error(err);
+  } finally {
+    state.querying = false;
+    sendBtn.disabled = chatInput.value.trim() === '';
+    scrollToBottom();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MESSAGE RENDERERS
+════════════════════════════════════════════════════════════════ */
+function appendUserMsg(text) {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-user';
+  row.innerHTML = `<div class="msg-user-bubble">${escHtml(text)}</div>`;
+  messagesContainer.appendChild(row);
+  scrollToBottom();
+}
+
+function appendLoadingMsg() {
+  const id = 'load-' + Date.now();
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai msg-loading';
+  row.id = id;
+  row.innerHTML = `
+    <div class="msg-ai-wrap">
+      <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
+      <div class="msg-ai-card">
+        <div class="loading-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <span class="loading-text">Analyzing your dataset…</span>
+      </div>
+    </div>`;
+  messagesContainer.appendChild(row);
+  scrollToBottom();
+  return id;
+}
+
+function appendErrorMsg(errText) {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai';
+  row.innerHTML = `
+    <div class="msg-ai-wrap">
+      <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
+      <div class="msg-ai-card">
+        <div class="ai-error">${iconX()} ${escHtml(errText)}</div>
+      </div>
+    </div>`;
+  messagesContainer.appendChild(row);
+}
+
+function appendConfirmMsg(msg) {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai';
+  row.innerHTML = `
+    <div class="msg-ai-wrap">
+      <div class="msg-ai-avatar" aria-hidden="true">${iconWarn()}</div>
+      <div class="msg-ai-card">
+        <div class="confirm-warning">${parseMarkdown(msg)}</div>
+      </div>
+    </div>`;
+  messagesContainer.appendChild(row);
+}
+
+function appendIrrelevantMsg(reason, suggestions) {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai';
+
+  const chipsHtml = suggestions.length
+    ? `<div class="irrelevant-suggestions">
+        <div class="irrelevant-suggestions-label">Try asking:</div>
+        <div class="irrelevant-chips">
+          ${suggestions.map(s =>
+            `<button class="irrelevant-chip" onclick="sendMessage(${JSON.stringify(s)})">${escHtml(s)}</button>`
+          ).join('')}
+        </div>
+      </div>`
+    : '';
+
+  row.innerHTML = `
+    <div class="msg-ai-wrap">
+      <div class="msg-ai-avatar" aria-hidden="true">${iconNo()}</div>
+      <div class="msg-ai-card">
+        <div class="irrelevant-card">
+          <div class="irrelevant-header">
+            <span class="irrelevant-badge">Dataset Relevance Check</span>
+          </div>
+          <p class="irrelevant-body">This question doesn't appear to be related to the uploaded dataset.</p>
+          <p class="irrelevant-hint">I can only answer questions using data available in the current dataset.</p>
+          ${chipsHtml}
+        </div>
+      </div>
+    </div>`;
+  messagesContainer.appendChild(row);
+  scrollToBottom();
+}
+
+function removeMsg(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MAIN AI MESSAGE RENDERER
+════════════════════════════════════════════════════════════════ */
+function appendAIMsg(data, question) {
+  const msgId = 'msg-' + Date.now();
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai';
+  row.id = msgId;
+
+  let inner = '';
+
+  // ── Text / markdown ──
+  if (data.message && data.type !== 'visualization') {
+    inner += `<div class="ai-summary">${parseMarkdown(data.message)}</div>`;
+  }
+
+  // ── Visualization response ──
+  if (data.type === 'visualization' && data.visualization) {
+    const viz = data.visualization;
+
+    // Chart canvas
+    inner += `
+      <div class="msg-chart-wrap" id="chart-container-${msgId}">
+        <canvas id="chart-${msgId}"></canvas>
+      </div>`;
+
+    // Chart type switcher
+    const allTypes = viz.all_types || [viz.chart_type];
+    if (allTypes.length > 1) {
+      inner += `
+        <div class="viz-switcher" id="switcher-${msgId}">
+          <span class="viz-picker-label">Switch chart:</span>
+          ${allTypes.map(t => `
+            <button class="viz-type-btn${t === viz.chart_type ? ' active' : ''}"
+              onclick="switchVizType('${msgId}', '${t}', this)">${_chartLabel(t)}</button>
+          `).join('')}
+        </div>`;
+    }
+
+    // Data table below chart
+    if (data.columns && data.rows && data.rows.length > 0) {
+      const tableId = msgId + '-t';
+      inner += `<div class="ai-divider"></div>` + buildTableBlock(tableId, data.columns, data.rows, data.total || data.rows.length, question, false);
+      state.tableData[tableId] = { columns: data.columns, allRows: data.rows, page: 0, sql: '' };
+    }
+  }
+
+  // ── Table result (query / schema / edit) ──
+  if (data.type !== 'visualization' && data.columns && data.rows && data.rows.length > 0) {
+    if (inner) inner += `<div class="ai-divider"></div>`;
+    inner += buildTableBlock(msgId, data.columns, data.rows, data.total || data.rows.length, question, data.type === 'query');
+  }
+
+  // ── Edit success ──
+  if (data.type === 'edit' && data.message) {
+    inner = `<div class="ai-summary">${parseMarkdown(data.message)}</div>` + inner;
+  }
+
+  row.innerHTML = `
+    <div class="msg-ai-wrap">
+      <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
+      <div class="msg-ai-card">${inner || '<div class="ai-summary">Done</div>'}</div>
+    </div>`;
+
+  messagesContainer.appendChild(row);
+
+  // Register table data for pagination
+  if (data.type !== 'visualization' && data.columns && data.rows) {
+    state.tableData[msgId] = { columns: data.columns, allRows: data.rows, page: 0, sql: state.lastSQL };
+  }
+
+  // Render visualization chart
+  if (data.type === 'visualization' && data.visualization) {
+    requestAnimationFrame(() => {
+      const container = document.getElementById(`chart-container-${msgId}`);
+      if (container) {
+        container.dataset.allTypes = JSON.stringify(data.visualization.all_types || []);
+        if (data.visualization.x_column) container.dataset.xCol = data.visualization.x_column;
+        if (data.visualization.y_column) container.dataset.yCol = data.visualization.y_column;
+      }
+      renderChartInMsg(msgId, data.visualization.spec, 'chart-' + msgId);
+    });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TABLE BUILDER
+════════════════════════════════════════════════════════════════ */
+function buildTableBlock(msgId, columns, rows, total, question, showToolbar) {
+  const pageRows  = rows.slice(0, PAGE_SIZE);
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+  const showing   = Math.min(PAGE_SIZE, rows.length);
+
+  const statsBar = `
+    <div class="result-stats">
+      <span class="result-count">
+        ${showing < total
+          ? `Showing ${showing} of ${total.toLocaleString()} rows`
+          : `${total.toLocaleString()} row${total !== 1 ? 's' : ''}`}
+      </span>
+    </div>`;
+
+  const tableHtml = `
+    <div class="result-table-wrap">
+      <table class="result-table" id="table-${msgId}">
+        <thead><tr>${columns.map(c => `<th>${escHtml(c)}</th>`).join('')}</tr></thead>
+        <tbody>${buildTableRows(columns, pageRows)}</tbody>
+      </table>
+      ${totalPages > 1 ? `
+        <div class="table-pagination">
+          <span id="page-info-${msgId}">Page 1 of ${totalPages}</span>
+          <div class="pagination-btns">
+            <button class="page-btn" id="prev-${msgId}" disabled onclick="changePage('${msgId}',-1)">← Prev</button>
+            <button class="page-btn" id="next-${msgId}" ${totalPages <= 1 ? 'disabled' : ''} onclick="changePage('${msgId}',1)">Next →</button>
+          </div>
+        </div>` : ''}
+    </div>`;
+
+  // Action toolbar — Visualize (query only) + Export
+  let toolbarHtml = '';
+  if (rows.length >= 1) {
+    toolbarHtml = `
+      <div class="action-toolbar">
+        ${showToolbar ? `<button class="toolbar-btn toolbar-btn-primary" onclick="openVizModal('${msgId}')">Visualize</button><div class="toolbar-sep"></div>` : ''}
+        <div class="dl-wrap">
+          <button class="toolbar-btn" onclick="toggleDlMenu('${msgId}')">⬇ Export ▾</button>
+          <div class="dl-menu" id="dlmenu-${msgId}">
+            <button class="dl-opt" onclick="dlFmt('xlsx')">Excel (.xlsx)</button>
+            <button class="dl-opt" onclick="dlFmt('pdf')">📄 PDF (.pdf)</button>
+            <button class="dl-opt" onclick="dlFmt('docx')">📝 Word (.docx)</button>
+            <button class="dl-opt" onclick="dlFmt('png')">🖼 Image (.png)</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  return statsBar + tableHtml + toolbarHtml;
+}
+
+function smartRecommend(numCols, catCols, dateCols, question) {
+  const q = (question || '').toLowerCase();
+  const recs = [];
+
+  if (dateCols.length >= 1 && numCols.length >= 1) {
+    recs.push({ type: 'line',      icon: '📈', label: 'Line Chart' });
+    recs.push({ type: 'area',      icon: '🏔', label: 'Area Chart' });
+  } else if (catCols.length >= 1 && numCols.length >= 1) {
+    const uniqueVals = catCols.length; // approximate
+    if (/pie|proportion|share|percent|distribution/i.test(q) || catCols.length === 1) {
+      recs.push({ type: 'pie',   icon: '🥧', label: 'Pie Chart' });
+      recs.push({ type: 'donut', icon: '🍩', label: 'Donut Chart' });
+      recs.push({ type: 'bar',   icon: '📊', label: 'Bar Chart' });
+    } else {
+      recs.push({ type: 'bar',   icon: '📊', label: 'Bar Chart' });
+      recs.push({ type: 'pie',   icon: '🥧', label: 'Pie Chart' });
+      recs.push({ type: 'donut', icon: '🍩', label: 'Donut Chart' });
+    }
+  } else if (numCols.length >= 2) {
+    recs.push({ type: 'scatter',   icon: '⚡', label: 'Scatter Plot' });
+    recs.push({ type: 'histogram', icon: '📉', label: 'Histogram' });
+  } else if (numCols.length >= 1) {
+    recs.push({ type: 'histogram', icon: '📉', label: 'Histogram' });
+    recs.push({ type: 'bar',       icon: '📊', label: 'Bar Chart' });
+  }
+
+    // Icons are now rendered as SVG badges elsewhere; keep labels text-only.
+  return recs.slice(0, 4).map(r => ({...r, icon: ''}));
+}
+
+function classifyColumns(columns, rows) {
+  const sample = rows.slice(0, 20);
+  const numericHint = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio|avg|sum|mean/;
+  const dateHint    = /date|time|year|month|day|period|created|updated/;
+
+  const numCols  = columns.filter(c => {
+    if (numericHint.test(c.toLowerCase())) return true;
+    const vals = sample.map(r => r[c]).filter(v => v !== null && v !== '');
+    return vals.length > 0 && vals.every(v => !isNaN(Number(v)));
+  });
+  const dateCols = columns.filter(c => dateHint.test(c.toLowerCase()));
+  const catCols  = columns.filter(c => !numCols.includes(c) && !dateCols.includes(c));
+
+  return { numCols, catCols, dateCols };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   INLINE CHART (from rec chips — renders directly below table)
+════════════════════════════════════════════════════════════════ */
+function renderInlineChart(msgId, chartType, btnEl) {
+  const td = state.tableData[msgId];
+  if (!td) return;
+
+  // Toggle: clicking same button again hides chart
+  const container = document.getElementById(`inline-chart-${msgId}`);
+  if (!container) return;
+
+  const allBtns = btnEl.closest('.chart-rec-strip').querySelectorAll('.chart-rec-chip');
+  const wasActive = btnEl.classList.contains('active-chart');
+  allBtns.forEach(b => b.classList.remove('active-chart'));
+
+  if (wasActive) {
+    container.innerHTML = '';
+    if (state.chartMap[msgId + '-inline']) {
+      state.chartMap[msgId + '-inline'].destroy();
+      delete state.chartMap[msgId + '-inline'];
+    }
+    return;
+  }
+
+  btnEl.classList.add('active-chart');
+
+  const { numCols, catCols, dateCols } = classifyColumns(td.columns, td.allRows);
+  const spec  = buildSpecFromData(chartType, td.columns, td.allRows, numCols, catCols);
+  const cid   = `inline-canvas-${msgId}`;
+  const allTypes = ['bar','line','area','pie','donut','scatter','histogram'];
+
+  // Build type switcher only for relevant types
+  const { recs: swRecs } = { recs: smartRecommend(numCols, catCols, dateCols, '').slice(0, 5) };
+  const switcherBtns = smartRecommend(numCols, catCols, dateCols, '').slice(0, 5).map(r =>
+      `<button class="inline-ct-btn${r.type === chartType ? ' active' : ''}"
+      onclick="switchInlineChart('${msgId}', '${r.type}', this)">${_chartIconSvg(r.type)} ${r.label}</button>`
+  ).join('');
+
+  container.innerHTML = `
+    <div class="inline-chart-panel">
+      <div class="inline-chart-header">
+        <div class="inline-chart-title">
+          📊 <span>${escHtml(spec.title || chartType + ' Chart')}</span>
+        </div>
+        <div class="inline-chart-type-strip">${switcherBtns}</div>
+      </div>
+      <div class="inline-chart-body">
+        <canvas id="${cid}"></canvas>
+      </div>
+    </div>`;
+
+  requestAnimationFrame(() => {
+    if (state.chartMap[msgId + '-inline']) {
+      state.chartMap[msgId + '-inline'].destroy();
+    }
+    state.chartMap[msgId + '-inline'] = _renderChart(cid, spec);
+  });
+}
+
+function switchInlineChart(msgId, newType, btnEl) {
+  const td = state.tableData[msgId];
+  if (!td) return;
+
+  btnEl.closest('.inline-chart-type-strip')
+    .querySelectorAll('.inline-ct-btn').forEach(b => b.classList.remove('active'));
+  btnEl.classList.add('active');
+
+  const { numCols, catCols } = classifyColumns(td.columns, td.allRows);
+  const spec  = buildSpecFromData(newType, td.columns, td.allRows, numCols, catCols);
+  const panel = btnEl.closest('.inline-chart-panel');
+  const title = panel.querySelector('.inline-chart-title span');
+  if (title) title.textContent = spec.title || newType + ' Chart';
+
+  const cid = `inline-canvas-${msgId}`;
+  if (state.chartMap[msgId + '-inline']) {
+    state.chartMap[msgId + '-inline'].destroy();
+  }
+  state.chartMap[msgId + '-inline'] = _renderChart(cid, spec);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VIZ MODAL (Power BI–style panel)
+════════════════════════════════════════════════════════════════ */
+function openVizModal(msgId) {
+  const td = state.tableData[msgId];
+  if (!td) return;
+
+  state.vizModal.msgId = msgId;
+
+  // Populate axis dropdowns
+  vizXAxis.innerHTML = td.columns.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+  vizYAxis.innerHTML = td.columns.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+
+  // Pre-select sensible defaults based on column classification
+  const { numCols, catCols, dateCols } = classifyColumns(td.columns, td.allRows);
+  if (catCols.length >= 1)  vizXAxis.value = catCols[0];
+  else if (dateCols.length) vizXAxis.value = dateCols[0];
+  if (numCols.length >= 1)  vizYAxis.value = numCols[0];
+  else if (td.columns.length >= 2) vizYAxis.value = td.columns[1];
+
+  // AI recommendation
+  const recs = smartRecommend(numCols, catCols, dateCols, '');
+  if (recs.length) {
+    vizAIRecText.textContent = `Best chart for this data: ${recs[0].icon} ${recs[0].label}`;
+    vizAIRec.style.display = 'flex';
+    // Pre-select best chart type
+    vizChartTypeGrid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.type === recs[0].type);
+    });
+
+    // Suggestion chips
+    vizRecChips.style.display = 'flex';
+    const existing = vizRecChips.querySelectorAll('.viz-rec-chip-btn');
+    existing.forEach(e => e.remove());
+    recs.forEach((r, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'viz-rec-chip-btn' + (i === 0 ? ' active' : '');
+      btn.textContent = `${r.icon} ${r.label}`;
+      btn.addEventListener('click', () => {
+        vizChartTypeGrid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.type === r.type);
+        });
+        vizRecChips.querySelectorAll('.viz-rec-chip-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      vizRecChips.appendChild(btn);
+    });
+  } else {
+    vizAIRec.style.display = 'none';
+    vizRecChips.style.display = 'none';
+  }
+
+  // Reset preview
+  vizPreviewEmpty.style.display = 'flex';
+  vizPreviewChart.style.display = 'none';
+  if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
+
+  vizModal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeVizModal() {
+  vizModal.style.display = 'none';
+  document.body.style.overflow = '';
+  if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
+}
+
+vizModalClose.addEventListener('click', closeVizModal);
+vizModal.addEventListener('click', (e) => {
+  if (e.target === vizModal) closeVizModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && vizModal.style.display !== 'none') closeVizModal();
+});
+
+// Chart type grid selection
+vizChartTypeGrid.addEventListener('click', (e) => {
+  const btn = e.target.closest('.viz-chart-type-btn');
+  if (!btn) return;
+  vizChartTypeGrid.querySelectorAll('.viz-chart-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+});
+
+// Aggregation selection
+vizAggRow.addEventListener('click', (e) => {
+  const btn = e.target.closest('.viz-agg-btn');
+  if (!btn) return;
+  vizAggRow.querySelectorAll('.viz-agg-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+});
+
+// Generate chart
+vizGenerateBtn.addEventListener('click', () => {
+  const msgId = state.vizModal.msgId;
+  if (!msgId) return;
+  const td = state.tableData[msgId];
+  if (!td) return;
+
+  const chartType = vizChartTypeGrid.querySelector('.viz-chart-type-btn.active')?.dataset.type || 'bar';
+  const xCol      = vizXAxis.value;
+  const yCol      = vizYAxis.value;
+  const agg       = vizAggRow.querySelector('.viz-agg-btn.active')?.dataset.agg || 'sum';
+
+  const spec = buildSpecFromDataWithAxes(chartType, td.columns, td.allRows, xCol, yCol, agg);
+
+  if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
+
+  vizPreviewEmpty.style.display = 'none';
+  vizPreviewChart.style.display = 'block';
+
+  requestAnimationFrame(() => {
+    state.vizModal.chart = _renderChart('vizModalCanvas', spec);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   SPEC BUILDERS
+════════════════════════════════════════════════════════════════ */
+function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg) {
+  const MAX = 500;
+  const limited = rows.slice(0, MAX);
+
+  if (chartType === 'scatter' && xCol && yCol) {
+    return {
+      plotType: 'scatter',
+      title: `${yCol} vs ${xCol}`,
+      xLabel: xCol, yLabel: yCol,
+      series: [{ label: 'Data', data: limited.map(r => ({ x: Number(r[xCol]), y: Number(r[yCol]) })) }]
+    };
+  }
+
+  if (chartType === 'histogram') {
+    const col  = yCol || xCol;
+    const vals = rows.map(r => Number(r[col])).filter(v => !isNaN(v));
+    return buildHistogramSpec(col, vals);
+  }
+
+  // Aggregate xCol → yCol
+  const aggMap = {};
+  rows.forEach(r => {
+    const k = String(r[xCol] ?? '(blank)');
+    const v = Number(r[yCol]) || 0;
+    if (!aggMap[k]) aggMap[k] = { sum: 0, count: 0, min: Infinity, max: -Infinity, vals: [] };
+    aggMap[k].sum   += v;
+    aggMap[k].count += 1;
+    aggMap[k].min    = Math.min(aggMap[k].min, v);
+    aggMap[k].max    = Math.max(aggMap[k].max, v);
+    aggMap[k].vals.push(v);
+  });
+
+  const getValue = (entry) => {
+    switch (agg) {
+      case 'avg':   return entry.count ? entry.sum / entry.count : 0;
+      case 'count': return entry.count;
+      case 'max':   return entry.max;
+      case 'min':   return entry.min;
+      default:      return entry.sum;
+    }
+  };
+
+  const sorted = Object.entries(aggMap).sort((a, b) => getValue(b[1]) - getValue(a[1])).slice(0, 20);
+  const labels = sorted.map(e => e[0]);
+  const data   = sorted.map(e => +getValue(e[1]).toFixed(2));
+
+  return {
+    plotType: chartType,
+    title: `${agg.toUpperCase()}(${yCol}) by ${xCol}`,
+    xLabel: xCol, yLabel: yCol,
+    labels,
+    series: [{ label: yCol, data, labels }]
+  };
+}
+
+function buildSpecFromData(chartType, columns, rows, numCols, catCols) {
+  const MAX = 20;
+  const limited = rows.slice(0, MAX);
+
+  if (chartType === 'scatter' && numCols.length >= 2) {
+    const xc = numCols[0], yc = numCols[1];
+    return {
+      plotType: 'scatter',
+      title: `${yc} vs ${xc}`,
+      xLabel: xc, yLabel: yc,
+      series: [{ label: 'Data', data: limited.map(r => ({ x: Number(r[xc]), y: Number(r[yc]) })) }]
+    };
+  }
+
+  if (chartType === 'histogram' && numCols.length >= 1) {
+    const col  = numCols[0];
+    const vals = rows.map(r => Number(r[col])).filter(v => !isNaN(v));
+    return buildHistogramSpec(col, vals);
+  }
+
+  const xCol = catCols[0] || columns[0];
+  const yCol = numCols[0] || columns[1] || columns[0];
+
+  const agg = {};
+  rows.forEach(r => {
+    const k = String(r[xCol] ?? '(blank)');
+    const v = Number(r[yCol]) || 0;
+    agg[k] = (agg[k] || 0) + v;
+  });
+  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]).slice(0, 15);
+  const labels = sorted.map(e => e[0]);
+  const data   = sorted.map(e => e[1]);
+
+  return {
+    plotType: chartType,
+    title: `${yCol} by ${xCol}`,
+    xLabel: xCol, yLabel: yCol,
+    labels,
+    series: [{ label: yCol, data, labels }]
+  };
+}
+
+function buildHistogramSpec(col, vals) {
+  const min  = Math.min(...vals), max = Math.max(...vals);
+  const bins = Math.min(15, Math.ceil(Math.sqrt(vals.length)));
+  const binSize = (max - min) / bins || 1;
+  const counts  = Array(bins).fill(0);
+  const labels  = [];
+  for (let i = 0; i < bins; i++)
+    labels.push(`${(min + i * binSize).toFixed(1)}–${(min + (i+1) * binSize).toFixed(1)}`);
+  vals.forEach(v => {
+    const idx = Math.min(Math.floor((v - min) / binSize), bins - 1);
+    counts[idx]++;
+  });
+  return {
+    plotType: 'bar', title: `Distribution of ${col}`,
+    xLabel: col, yLabel: 'Count',
+    series: [{ label: 'Frequency', data: counts, labels }]
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PAGINATION
+════════════════════════════════════════════════════════════════ */
+function changePage(msgId, delta) {
+  const td = state.tableData[msgId];
+  if (!td) return;
+
+  const totalPages = Math.ceil(td.allRows.length / PAGE_SIZE);
+  const newPage    = td.page + delta;
+  if (newPage < 0 || newPage >= totalPages) return;
+
+  td.page = newPage;
+  const pageRows = td.allRows.slice(newPage * PAGE_SIZE, (newPage + 1) * PAGE_SIZE);
+
+  const tbody = document.querySelector(`#table-${msgId} tbody`);
+  if (tbody) tbody.innerHTML = buildTableRows(td.columns, pageRows);
+
+  const info = document.getElementById(`page-info-${msgId}`);
+  if (info) info.textContent = `Page ${newPage + 1} of ${totalPages}`;
+
+  const prevBtn = document.getElementById(`prev-${msgId}`);
+  const nextBtn = document.getElementById(`next-${msgId}`);
+  if (prevBtn) prevBtn.disabled = newPage === 0;
+  if (nextBtn) nextBtn.disabled = newPage >= totalPages - 1;
+}
+
+function buildTableRows(columns, rows) {
+  return rows.map(row =>
+    `<tr>${columns.map(c => `<td title="${escHtml(String(row[c] ?? ''))}">${escHtml(String(row[c] ?? ''))}</td>`).join('')}</tr>`
+  ).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DOWNLOAD / EXPORT
+════════════════════════════════════════════════════════════════ */
+function toggleDlMenu(msgId) {
+  document.querySelectorAll('.dl-menu').forEach(m => {
+    if (m.id !== `dlmenu-${msgId}`) m.classList.remove('open');
+  });
+  const menu = document.getElementById(`dlmenu-${msgId}`);
+  if (menu) menu.classList.toggle('open');
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.dl-wrap')) {
+    document.querySelectorAll('.dl-menu').forEach(m => m.classList.remove('open'));
+  }
+});
+
+function dlFmt(fmt) {
+  window.location.href = `/download/${fmt}`;
+  document.querySelectorAll('.dl-menu').forEach(m => m.classList.remove('open'));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SWITCH CHART TYPE (visualization response)
+════════════════════════════════════════════════════════════════ */
+async function switchVizType(msgId, newType, btnEl) {
+  const switcher = document.getElementById(`switcher-${msgId}`);
+  if (switcher) {
+    switcher.querySelectorAll('.viz-type-btn').forEach(b => b.classList.remove('active'));
+    btnEl.classList.add('active');
+  }
+
+  const container = document.getElementById(`chart-container-${msgId}`);
+  const xCol = container ? container.dataset.xCol : undefined;
+  const yCol = container ? container.dataset.yCol : undefined;
+
+  try {
+    const body = { type: newType };
+    if (xCol) body.xColumn = xCol;
+    if (yCol) body.yColumn = yCol;
+
+    const res  = await fetch('/visualize/render', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { console.error(data.error); return; }
+    renderChartInMsg(msgId, data.spec, 'chart-' + msgId);
+  } catch (err) {
+    console.error('switchVizType error:', err);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CHART.JS RENDERERS
+════════════════════════════════════════════════════════════════ */
+const CHART_COLORS = [
+  '#16A34A','#22C55E','#3B82F6','#F59E0B','#EF4444',
+  '#8B5CF6','#EC4899','#14B8A6','#F97316','#6366F1',
+  '#0EA5E9','#D946EF','#84CC16','#F43F5E','#06B6D4',
+];
+
+function renderChartInMsg(msgId, spec, canvasId) {
+  if (!spec) return;
+  const existing = state.chartMap[msgId];
+  if (existing) { existing.destroy(); delete state.chartMap[msgId]; }
+  const chart = _renderChart(canvasId, spec);
+  if (chart) state.chartMap[msgId] = chart;
+}
+
+function _renderChart(canvasId, spec) {
+  if (!spec) return null;
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+
+  const plotType   = (spec.plotType || '').toLowerCase();
+  let chartJsType  = 'bar';
+  if (plotType === 'line' || plotType === 'area') chartJsType = 'line';
+  else if (plotType === 'scatter') chartJsType = 'scatter';
+  else if (plotType === 'pie')     chartJsType = 'pie';
+  else if (plotType === 'donut')   chartJsType = 'doughnut';
+
+  const series  = spec.series && spec.series[0] ? spec.series[0] : null;
+  const labels  = series?.labels || spec.labels || [];
+  const values  = series?.data   || [];
+
+  const isPie  = chartJsType === 'pie' || chartJsType === 'doughnut';
+  const isArea = plotType === 'area';
+
+  const dataset = {
+    label:           series?.label || spec.yLabel || 'Data',
+    data:            values,
+    backgroundColor: isPie ? CHART_COLORS : 'rgba(22,163,74,0.18)',
+    borderColor:     isPie ? CHART_COLORS.map(c => c + 'cc') : '#16A34A',
+    borderWidth:     2,
+    pointRadius:     chartJsType === 'scatter' ? 4 : 3,
+    fill:            isArea ? true : undefined,
+    tension:         chartJsType === 'line' ? 0.35 : undefined,
+  };
+
+  const useLabels = !isPie && chartJsType !== 'scatter';
+
+  return new Chart(canvas.getContext('2d'), {
+    type: chartJsType,
+    data: {
+      labels:   useLabels ? labels : undefined,
+      datasets: [dataset],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      animation: { duration: 450 },
+      plugins: {
+        legend: {
+          display: isPie,
+          position: 'bottom',
+          labels: { boxWidth: 12, font: { size: 11 } },
+        },
+        title: {
+          display: !!spec.title,
+          text:    spec.title || '',
+          font:    { size: 13, weight: '600' },
+          color:   '#374151',
+          padding: { bottom: 12 },
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const v = ctx.parsed?.y ?? ctx.parsed;
+              return ` ${ctx.dataset.label}: ${typeof v === 'number' ? v.toLocaleString() : v}`;
+            }
+          }
+        }
+      },
+      scales: isPie ? {} : {
+        x: {
+          ticks: { maxRotation: 35, font: { size: 11 }, color: '#6B7280', maxTicksLimit: 14 },
+          grid:  { color: '#F3F4F6' },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { font: { size: 11 }, color: '#6B7280',
+            callback: v => typeof v === 'number' && v >= 1000 ? v.toLocaleString() : v },
+          grid:  { color: '#F3F4F6' },
+        },
+      },
+    },
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HELPERS
+════════════════════════════════════════════════════════════════ */
+function iconSpinner(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 2a10 10 0 1 0 10 10"/>
+  </svg>`;
+}
+
+function iconCheck(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 6 9 17l-5-5"/>
+  </svg>`;
+}
+
+function iconFolder(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 6h5l2 2h11v10H3z"/>
+  </svg>`;
+}
+
+function iconBot(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="4" width="14" height="16" rx="2"/>
+    <path d="M9 13h.01"/>
+    <path d="M15 13h.01"/>
+    <path d="M9 17c1.5 1.2 4.5 1.2 6 0"/>
+  </svg>`;
+}
+
+function iconWarn(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.3 3.7 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/>
+    <path d="M12 9v4"/>
+    <path d="M12 17h.01"/>
+  </svg>`;
+}
+
+function iconX(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6 6 18"/>
+    <path d="M6 6l12 12"/>
+  </svg>`;
+}
+
+function iconNo(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <path d="M15 9 9 15"/>
+  </svg>`;
+}
+
+function _chartIconSvg(type){
+  const map = {
+    bar: 'M4 20V10h4v10H4z M10 20V4h4v16h-4z M16 20v-7h4v7h-4z',
+    line: 'M4 19l6-6 4 4 6-10',
+    area: 'M4 19V9l5 4 4-7 7 13',
+    pie: 'M12 12V2a10 10 0 1 1-9 5h9z',
+    donut: 'M12 2a10 10 0 1 0 9 5',
+    scatter: 'M7 17l3-6 4 8 3-4',
+    histogram: 'M4 20V10h4v10H4z M10 20V4h4v16h-4z M16 20v-6h4v6h-4z'
+  };
+  const d = map[type] || map.bar;
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
+}
+
+function _chartLabel(t) {
+  const labels = { bar:'Bar', line:'Line', area:'Area', pie:'Pie',
+                   donut:'Donut', scatter:'Scatter', histogram:'Histogram' };
+  return labels[t] || t;
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function scrollToBottom() {
+  chatMain.scrollTo({ top: chatMain.scrollHeight, behavior: 'smooth' });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MARKDOWN PARSER (unchanged)
+════════════════════════════════════════════════════════════════ */
+function parseMarkdown(md) {
+  if (!md) return '';
+  let html = md
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+  html = html.replace(/^## (.*$)/gim,  '<h2>$1</h2>');
+  html = html.replace(/^# (.*$)/gim,   '<h1>$1</h1>');
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.*?)\*/g,     '<em>$1</em>');
+  html = html.replace(/`(.*?)`/g,       '<code>$1</code>');
+  html = html.replace(/^>\s*\[!TIP\]\s*-?\s*(.*$)/gim,     '<div class="md-tip">$1</div>');
+  html = html.replace(/^>\s*\[!WARNING\]\s*-?\s*(.*$)/gim, '<div class="md-warning">$1</div>');
+  html = html.replace(/^>\s*(.*$)/gim, '<blockquote>$1</blockquote>');
+  html = html.replace(/^\s*-\s+(.*$)/gim, '<li>$1</li>');
+  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+
+  const lines = html.split('\n');
+  let inTable = false, tableHtml = '';
+  const outLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('|') && line.endsWith('|')) {
+      if (!inTable) { inTable = true; tableHtml = '<table>'; }
+      if (/^\|[-:\s|]+\|$/.test(line)) continue;
+      const parts = line.slice(1, -1).split('|').map(p => p.trim());
+      const tag = tableHtml === '<table>' ? 'th' : 'td';
+      tableHtml += '<tr>' + parts.map(p => `<${tag}>${p}</${tag}>`).join('') + '</tr>';
+      outLines.push('');
+    } else {
+      if (inTable) { tableHtml += '</table>'; outLines.push(tableHtml); tableHtml = ''; inTable = false; }
+      outLines.push(lines[i]);
+    }
+  }
+  if (inTable) outLines.push(tableHtml + '</table>');
+  html = outLines.join('\n');
+  // Collapse 3+ consecutive <br> into max 1, and collapse 2 into 1
+  html = html.replace(/(<br\s*\/??>\s*){2,}/gi, '<br>');
+  html = html.replace(/\n/g, '<br>');
+  // Final pass: collapse any remaining double-br
+  html = html.replace(/(<br\s*\/??>\s*){2,}/gi, '<br>');
+  return html;
+}

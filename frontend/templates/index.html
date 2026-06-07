@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dataset AI — Chat with your Data</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body data-theme="light">
+
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SCREEN 1 — UPLOAD
+  ════════════════════════════════════════════════════════════════ -->
+  <div id="uploadScreen" class="upload-screen">
+    <div class="upload-screen-inner">
+      <button class="btn-icon" id="themeToggleUpload" title="Toggle dark mode" aria-label="Toggle dark mode" style="position: absolute; top: 18px; right: 18px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
+        </svg>
+      </button>
+
+      <div class="upload-logo">
+        <span class="upload-logo-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 6h16"/>
+            <path d="M4 12h16"/>
+            <path d="M4 18h16"/>
+          </svg>
+        </span>
+        <div class="upload-logo-text">Dataset AI</div>
+      </div>
+
+      <p class="upload-tagline">Talk with your CSV files using plain English</p>
+
+        <div class="upload-card" id="uploadZone">
+        <input type="file" id="fileInput" accept=".csv" />
+        <div id="uploadIconEl" class="upload-card-icon" aria-hidden="true">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 16V8a2 2 0 0 0-2-2h-3"/>
+            <path d="M4 16V8a2 2 0 0 1 2-2h3"/>
+            <rect x="3" y="16" width="18" height="4" rx="2"/>
+            <path d="M12 12V3"/>
+            <path d="m7 8 5-5 5 5"/>
+          </svg>
+        </div>
+        <div id="uploadTitleEl" class="upload-card-title">Drag &amp; drop your dataset here</div>
+        <div id="uploadHintEl" class="upload-card-hint">or click to browse</div>
+        <div class="upload-card-formats">Supports: CSV</div>
+      </div>
+
+      <div id="uploadError" class="upload-error" style="display:none;"></div>
+
+      <div class="upload-features">
+        <div class="feature-pill">Instant Analysis</div>
+        <div class="feature-pill">AI-Powered SQL</div>
+        <div class="feature-pill">Auto Visualization</div>
+        <div class="feature-pill">Export Results</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SCREEN 2 — ENTERPRISE WORKSPACE
+  ════════════════════════════════════════════════════════════════ -->
+  <div id="chatScreen" class="chat-screen" style="display:none;">
+
+    <!-- HEADER -->
+    <header class="chat-header">
+      <div class="chat-header-left">
+        <span class="header-logo-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <path d="M7 7h10"/>
+            <path d="M7 12h10"/>
+            <path d="M7 17h7"/>
+          </svg>
+        </span>
+        <span class="header-logo-text">Dataset AI</span>
+      </div>
+
+      <div class="chat-header-right">
+        <div class="dataset-badge" id="datasetBadge">
+          <span class="dataset-badge-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+          </span>
+          <div class="dataset-badge-info">
+            <span class="dataset-badge-name" id="datasetName">—</span>
+            <span class="dataset-badge-meta" id="datasetMeta">—</span>
+          </div>
+          <span class="dataset-badge-status">● Ready</span>
+        </div>
+
+        <button class="btn-icon" id="sidebarToggle" title="Toggle dataset panel" aria-label="Toggle dataset panel">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        </button>
+
+        <button class="btn-icon" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
+          </svg>
+        </button>
+
+        <button class="btn-icon btn-new-chat" id="newChatBtn" title="Upload new dataset" aria-label="Upload new dataset">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Dataset
+        </button>
+      </div>
+    </header>
+
+    <!-- DATASET OVERVIEW BANNER (shown after upload, hidden when chat starts) -->
+    <div id="datasetOverview" class="dataset-overview" style="display:none;">
+      <div class="dataset-overview-inner">
+        <div class="overview-cards">
+          <div class="overview-card">
+          <div class="overview-card-icon" style="background:#ECFDF5;color:#16A34A;" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="8" ry="3"/>
+              <path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/>
+            </svg>
+          </div>
+            <div class="overview-card-body">
+              <div class="overview-card-value" id="ovRows">—</div>
+              <div class="overview-card-label">Total Rows</div>
+            </div>
+          </div>
+          <div class="overview-card">
+          <div class="overview-card-icon" style="background:#EFF6FF;color:#2563EB;" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12l3-3 4 4 7-7 4 4"/>
+              <path d="M14 7h7v7"/>
+            </svg>
+          </div>
+            <div class="overview-card-body">
+              <div class="overview-card-value" id="ovCols">—</div>
+              <div class="overview-card-label">Columns</div>
+            </div>
+          </div>
+          <div class="overview-card">
+          <div class="overview-card-icon" style="background:#F0FDF4;color:#15803D;" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 9h16"/>
+              <path d="M6 15h12"/>
+              <path d="M10 5l-1 14"/>
+              <path d="M14 5l1 14"/>
+            </svg>
+          </div>
+            <div class="overview-card-body">
+              <div class="overview-card-value" id="ovNumCols">—</div>
+              <div class="overview-card-label">Numeric</div>
+            </div>
+          </div>
+          <div class="overview-card">
+          <div class="overview-card-icon" style="background:#FDF4FF;color:#7E22CE;" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 20h16"/>
+              <path d="M6 20l6-16 6 16"/>
+              <path d="M9 14h6"/>
+            </svg>
+          </div>
+            <div class="overview-card-body">
+              <div class="overview-card-value" id="ovCatCols">—</div>
+              <div class="overview-card-label">Categorical</div>
+            </div>
+          </div>
+        </div>
+        <div class="overview-actions">
+          <button class="overview-action-btn overview-action-primary" onclick="sendMessage('Show top 10 rows')">
+            Explore Data
+          </button>
+          <button class="overview-action-btn" onclick="sendMessage('Describe the dataset schema')">
+            Dataset Profile
+          </button>
+          <button class="overview-action-btn" onclick="loadInsights()">
+            AI Insights
+          </button>
+
+          <button class="overview-action-btn" onclick="sendMessage('Show missing values report')">
+            Quality Report
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ENTERPRISE MAIN LAYOUT -->
+    <div class="chat-layout">
+      <!-- LEFT NAVIGATION (visual only; maps to existing sections) -->
+      <nav class="enterprise-nav" id="enterpriseNav">
+        <div class="enterprise-nav-inner">
+          <div class="enterprise-nav-title">Analytics</div>
+
+          <a class="enterprise-nav-item active" href="#" data-section="explore">
+            <span class="enterprise-nav-icon" aria-hidden="true">▦</span>
+            <span class="enterprise-nav-label">Explore Data</span>
+          </a>
+          <a class="enterprise-nav-item" href="#" data-section="profile">
+            <span class="enterprise-nav-icon" aria-hidden="true">≡</span>
+            <span class="enterprise-nav-label">Dataset Profile</span>
+          </a>
+          <a class="enterprise-nav-item" href="#" data-section="insights">
+            <span class="enterprise-nav-icon" aria-hidden="true">✦</span>
+            <span class="enterprise-nav-label">AI Insights</span>
+          </a>
+          <a class="enterprise-nav-item" href="#" data-section="quality">
+            <span class="enterprise-nav-icon" aria-hidden="true">✓</span>
+            <span class="enterprise-nav-label">Quality Report</span>
+          </a>
+          <a class="enterprise-nav-item" href="#" data-section="visuals">
+            <span class="enterprise-nav-icon" aria-hidden="true">◷</span>
+            <span class="enterprise-nav-label">Visualizations</span>
+          </a>
+
+          <div class="enterprise-nav-spacer"></div>
+
+          <a class="enterprise-nav-item" href="#" data-section="reports">
+            <span class="enterprise-nav-icon" aria-hidden="true">⎙</span>
+            <span class="enterprise-nav-label">Reports</span>
+          </a>
+          <a class="enterprise-nav-item" href="#" data-section="settings">
+            <span class="enterprise-nav-icon" aria-hidden="true">⚙</span>
+            <span class="enterprise-nav-label">Settings</span>
+          </a>
+        </div>
+      </nav>
+
+      <!-- CONVERSATION AREA -->
+      <main class="chat-main" id="chatMain">
+
+        <!-- Empty state -->
+        <div id="emptyState" class="empty-state">
+          <div class="empty-state-icon" aria-hidden="true">
+            <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="7" width="16" height="14" rx="2"/>
+              <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              <path d="M9 13h.01"/>
+              <path d="M15 13h.01"/>
+              <path d="M9 17c1.5 1.2 4.5 1.2 6 0"/>
+            </svg>
+          </div>
+          <h2 class="empty-state-title">What would you like to know<br>about your dataset?</h2>
+          <p class="empty-state-sub">Ask anything in plain English — I'll generate SQL, run it, and show results.</p>
+
+          <div class="suggestion-grid" id="suggestionGrid">
+            <button class="suggestion-btn" data-q="Show top 10 rows">
+              <span class="suggestion-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+              </span>
+              <span>Show top 10 rows</span>
+            </button>
+            <button class="suggestion-btn" data-q="Count total rows">
+              <span class="suggestion-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4l-10 10"/></svg>
+              </span>
+              <span>Count total rows</span>
+            </button>
+            <button class="suggestion-btn" data-q="Show missing values report">
+              <span class="suggestion-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              </span>
+              <span>Missing values report</span>
+            </button>
+            <button class="suggestion-btn" data-q="Show unique values in each column">
+              <span class="suggestion-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.5 6L20 10l-6.5 1.9L12 22l-1.5-10.1L4 10l6.5-2z"/></svg>
+              </span>
+              <span>Unique values per column</span>
+            </button>
+            <button class="suggestion-btn" data-q="Describe the dataset schema">
+              <span class="suggestion-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6l2 2v16a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>
+              </span>
+              <span>Describe dataset schema</span>
+            </button>
+            <button class="suggestion-btn" data-q="Show business insights">
+              <span class="suggestion-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12c.9.7 2 2 2 3h4c0-1 1.1-2.3 2-3A7 7 0 0 0 12 2z"/></svg>
+              </span>
+              <span>Business insights</span>
+            </button>
+            <button class="suggestion-btn" data-q="Visualize this">
+              <span class="suggestion-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><path d="M21 12v9H3"/></svg>
+              </span>
+              <span>Visualize this</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Messages container -->
+        <div id="messagesContainer" class="messages-container"></div>
+
+        <!-- Bottom padding so last message isn't hidden by input -->
+        <div style="height: 140px;"></div>
+      </main>
+
+      <!-- RIGHT CONTEXT PANEL (preserves chatSidebar DOM/behavior) -->
+      <aside class="chat-sidebar" id="chatSidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Dataset Context</span>
+          <button class="btn-icon sidebar-close" id="sidebarClose" aria-label="Close dataset context panel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18"/>
+              <path d="M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sidebar-body" id="sidebarBody">
+          <div class="sidebar-section">
+            <div class="sidebar-label">Dataset Name</div>
+            <div class="sidebar-value" id="sbFileName">—</div>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-label">Rows & Columns</div>
+            <div class="sidebar-value" id="sbDimensions">—</div>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-label">Schema</div>
+            <div id="sbColumns" class="sb-columns-list"></div>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-label">Quality Summary</div>
+            <div class="sidebar-value" id="sbQualitySummary">Not computed yet</div>
+          </div>
+        </div>
+      </aside>
+
+    </div><!-- /chat-layout -->
+
+    <!-- FIXED INPUT BAR -->
+    <div class="input-bar-wrap">
+      <div class="input-bar">
+        <textarea
+          id="chatInput"
+          class="chat-textarea"
+          placeholder="Ask anything about your dataset..."
+          rows="1"
+          autocomplete="off"
+        ></textarea>
+        <button class="send-btn" id="sendBtn" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+      <div class="input-bar-hint">Enter to send · Shift+Enter for new line</div>
+    </div>
+
+  </div><!-- /chatScreen -->
+
+  <!-- Visualization Modal -->
+  <div id="vizModal" class="viz-modal-overlay" style="display:none;">
+
+    <div class="viz-modal">
+      <div class="viz-modal-header">
+        <div class="viz-modal-title">
+          <span class="viz-modal-title-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M7 13l3-3 3 3 4-6"/>
+              <path d="M7 20h10"/>
+            </svg>
+          </span>
+          <span>Build Visualization</span>
+        </div>
+        <button class="viz-modal-close" id="vizModalClose">✕</button>
+      </div>
+      <div class="viz-modal-body">
+        <!-- Left: controls -->
+        <div class="viz-modal-controls">
+
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">Chart Type</label>
+            <div class="viz-chart-type-grid" id="vizChartTypeGrid">
+              <button class="viz-chart-type-btn active" data-type="bar" aria-label="Bar">Bar</button>
+              <button class="viz-chart-type-btn" data-type="line" aria-label="Line">Line</button>
+              <button class="viz-chart-type-btn" data-type="area" aria-label="Area">Area</button>
+              <button class="viz-chart-type-btn" data-type="pie" aria-label="Pie">Pie</button>
+              <button class="viz-chart-type-btn" data-type="donut" aria-label="Donut">Donut</button>
+              <button class="viz-chart-type-btn" data-type="scatter" aria-label="Scatter">Scatter</button>
+              <button class="viz-chart-type-btn" data-type="histogram" aria-label="Histogram">Histogram</button>
+            </div>
+          </div>
+
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">X Axis <span class="viz-ctrl-sub">(Category / Label)</span></label>
+            <select class="viz-select" id="vizXAxis"></select>
+          </div>
+
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">Y Axis <span class="viz-ctrl-sub">(Value)</span></label>
+            <select class="viz-select" id="vizYAxis"></select>
+          </div>
+
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">Aggregation</label>
+            <div class="viz-agg-row" id="vizAggRow">
+              <button class="viz-agg-btn active" data-agg="sum">Sum</button>
+              <button class="viz-agg-btn" data-agg="avg">Avg</button>
+              <button class="viz-agg-btn" data-agg="count">Count</button>
+              <button class="viz-agg-btn" data-agg="max">Max</button>
+              <button class="viz-agg-btn" data-agg="min">Min</button>
+            </div>
+          </div>
+
+          <div class="viz-ai-rec" id="vizAIRec" style="display:none;">
+            <span class="viz-ai-rec-badge" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2l1.5 6L20 10l-6.5 1.9L12 22l-1.5-10.1L4 10l6.5-2z"/>
+              </svg>
+            </span>
+            <span class="viz-ai-rec-badge-text">AI</span>
+            <span class="viz-ai-rec-text" id="vizAIRecText"></span>
+          </div>
+
+          <button class="viz-generate-btn" id="vizGenerateBtn">
+            <span>Generate Chart</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+
+        <!-- Right: preview -->
+        <div class="viz-modal-preview">
+            <div class="viz-preview-empty" id="vizPreviewEmpty">
+            <div class="viz-preview-empty-icon" aria-hidden="true">
+              <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M7 7h10"/>
+                <path d="M7 12h10"/>
+                <path d="M7 17h7"/>
+              </svg>
+            </div>
+            <p>Configure and click<br><strong>Generate Chart</strong></p>
+          </div>
+          <div id="vizPreviewChart" style="display:none;">
+            <canvas id="vizModalCanvas"></canvas>
+          </div>
+          <div class="viz-rec-chips" id="vizRecChips" style="display:none;">
+            <span class="viz-rec-chips-label">Suggested:</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart.js -->
+  <script>
+    // Phase-2 UI shell: navigation toggles active styling only.
+    (function(){
+      const nav = document.getElementById('enterpriseNav');
+      if(!nav) return;
+      nav.querySelectorAll('.enterprise-nav-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          e.preventDefault();
+          nav.querySelectorAll('.enterprise-nav-item').forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+        });
+      });
+    })();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="{{ url_for('static', filename='main.js') }}"></script>
+</body>
+</html>
