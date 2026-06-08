@@ -45,6 +45,14 @@ def _semantic_tag(col_name: str) -> str | None:
     return None
 
 
+def get_columns_from_db(conn: sqlite3.Connection) -> list[str]:
+    """Get list of column names from the dataset table."""
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({TABLE_NAME})")
+    columns = cursor.fetchall()
+    return [c[1] for c in columns]
+
+
 def load_dataframe(df: pd.DataFrame) -> sqlite3.Connection:
     """
     Load a DataFrame into a per-request in-memory SQLite database.

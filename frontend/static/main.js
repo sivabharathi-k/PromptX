@@ -5,6 +5,7 @@ const state = {
   uploaded:    false,
   querying:    false,
   dataset:     { name: '', rows: 0, columns: [] },
+  masterSchema: {},   // { column_name: "NUM"|"TEXT"|"DATE" } - single source of truth
   chartMap:    {},   // id -> Chart instance
   tableData:   {},   // msgId -> { columns, allRows, page, sql }
   sidebarOpen: true,
@@ -107,6 +108,9 @@ async function doUpload(file) {
     state.dataset = { name: file.name, rows: data.rows, columns: data.columns };
     state.uploaded = true;
 
+    // Store master schema from backend (single source of truth)
+    state.masterSchema = data.schema || {};
+
     uploadZone.classList.remove('uploading');
     uploadZone.classList.add('success');
   uploadIconEl.innerHTML = iconCheck();
@@ -158,11 +162,20 @@ function transitionToChat(data) {
 
 function populateOverview(data) {
   const cols = data.columns || [];
-  const numericHints = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio/;
-  const dateHints    = /date|time|year|month|day|period|created|updated/;
-
-  const numCols = cols.filter(c => numericHints.test(c.toLowerCase()));
-  const catCols = cols.filter(c => !numericHints.test(c.toLowerCase()) && !dateHints.test(c.toLowerCase()));
+  
+  // Use master schema for NUM/DATE/TEXT breakdown if available
+  let numCols, catCols;
+  if (Object.keys(state.masterSchema).length > 0) {
+    const classified = classifyColumnsFromSchema(cols);
+    numCols = classified.numCols;
+    catCols = classified.catCols;
+  } else {
+    // Fallback: old heuristic-based classification
+    const numericHints = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio/;
+    const dateHints    = /date|time|year|month|day|period|created|updated/;
+    numCols = cols.filter(c => numericHints.test(c.toLowerCase()));
+    catCols = cols.filter(c => !numericHints.test(c.toLowerCase()) && !dateHints.test(c.toLowerCase()));
+  }
 
   // Target Sidebar IDs
   const elRows = document.getElementById('sbRows');
@@ -181,11 +194,12 @@ function buildSidebarColumns(cols) {
   cols.forEach(c => {
     const div = document.createElement('div');
     div.className = 'sb-col-item';
-    const lc = c.toLowerCase();
+    // Use master schema as single source of truth
+    const dtype = state.masterSchema[c] || 'TEXT';
     let typeClass = 'type-text', typeLabel = 'TEXT';
-    if (/\bid\b|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate/.test(lc)) {
+    if (dtype === 'NUM') {
       typeClass = 'type-num'; typeLabel = 'NUM';
-    } else if (/date|time|year|month|day|period|created|updated/.test(lc)) {
+    } else if (dtype === 'DATE') {
       typeClass = 'type-date'; typeLabel = 'DATE';
     }
     div.innerHTML = `
@@ -199,17 +213,21 @@ function buildSidebarColumns(cols) {
 /* ═══════════════════════════════════════════════════════════════
    NEW CHAT / RESET
 ════════════════════════════════════════════════════════════════ */
-newChatBtn.addEventListener('click', () => {
+function hardResetToUploadScreen() {
   Object.values(state.chartMap).forEach(c => c && c.destroy && c.destroy());
   if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
+
   state.chartMap = {};
   state.tableData = {};
   state.uploaded = false;
+  state.dataset = { name: '', rows: 0, columns: [] };
+  state.querying = false;
   state.lastSQL  = '';
+  state.vizModal = { msgId: null, chart: null };
 
   messagesContainer.innerHTML = '';
   emptyState.style.display = 'block';
-  datasetOverview.style.display = 'none';
+  if (datasetOverview) datasetOverview.style.display = 'none';
   inputBarWrap.classList.remove('visible');
   chatScreen.style.display = 'none';
   uploadScreen.style.display = 'flex';
@@ -221,6 +239,22 @@ newChatBtn.addEventListener('click', () => {
   uploadError.style.display = 'none';
   fileInput.value = '';
   closeVizModal();
+}
+
+newChatBtn.addEventListener('click', () => {
+  // Preserve theme (stored in localStorage + already applied to body)
+
+  // Smooth transition
+  document.body.classList.add('page-transition-out');
+
+  // Clear any server-side session-backed state by navigating to the initial page.
+  // Backend /initial-load page corresponds to showing the upload UI.
+  setTimeout(() => {
+    window.location.href = '/';
+  }, 160);
+
+  // Immediate in-memory reset to prevent flashes of old UI
+  setTimeout(() => hardResetToUploadScreen(), 0);
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -243,18 +277,14 @@ function toggleLeftSidebar() {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   SUGGESTION CHIPS / QUICK ACTIONS
+   SIDEBAR NAVIGATION
 ════════════════════════════════════════════════════════════════ */
-// Sidebar Quick Actions
+// Sidebar navigation items - close on mobile overlay
 if (leftSidebar) {
   leftSidebar.addEventListener('click', (e) => {
     const btn = e.target.closest('.sidebar-nav-item');
     if (!btn) return;
-    const q = btn.dataset.q;
-    if (q) {
-      if (window.innerWidth <= 1100) toggleLeftSidebar(); // Close on mobile overlay
-      sendMessage(q);
-    }
+    if (window.innerWidth <= 1100) toggleLeftSidebar();
   });
 }
 
@@ -294,7 +324,6 @@ sendBtn.addEventListener('click', () => {
 ════════════════════════════════════════════════════════════════ */
 async function loadInsights() {
   if (!state.uploaded) return;
-
 
   emptyState.style.display = 'none';
   messagesContainer.innerHTML = '';
@@ -365,7 +394,7 @@ function renderInsightsCards(insights) {
     const impact = (ins.impact || 'LOW').toUpperCase();
 
     const badgeColor = impact === 'HIGH'
-      ? '#16A34A'
+      ? '#2563EB'
       : impact === 'MEDIUM'
         ? '#F59E0B'
         : '#94A3B8';
@@ -494,7 +523,7 @@ function viewInsightDetail(insight) {
   if (existing) existing.remove();
 
   const impact = (insight.impact || 'LOW').toUpperCase();
-  const badgeColor = impact === 'HIGH' ? '#16A34A' : impact === 'MEDIUM' ? '#F59E0B' : '#94A3B8';
+  const badgeColor = impact === 'HIGH' ? '#2563EB' : impact === 'MEDIUM' ? '#F59E0B' : '#94A3B8';
 
   const overlay = document.createElement('div');
   overlay.id = modalId;
@@ -911,6 +940,12 @@ function smartRecommend(numCols, catCols, dateCols, question) {
 }
 
 function classifyColumns(columns, rows) {
+  // Prefer master schema if available (single source of truth)
+  if (Object.keys(state.masterSchema).length > 0) {
+    return classifyColumnsFromSchema(columns);
+  }
+  
+  // Fallback: old heuristic-based classification (for backward compatibility)
   const sample = rows.slice(0, 20);
   const numericHint = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio|avg|sum|mean/;
   const dateHint    = /date|time|year|month|day|period|created|updated/;
@@ -923,6 +958,29 @@ function classifyColumns(columns, rows) {
   const dateCols = columns.filter(c => dateHint.test(c.toLowerCase()));
   const catCols  = columns.filter(c => !numCols.includes(c) && !dateCols.includes(c));
 
+  return { numCols, catCols, dateCols };
+}
+
+/**
+ * Classify columns using the master schema (single source of truth).
+ * Returns { numCols, catCols, dateCols } based on schema types.
+ */
+function classifyColumnsFromSchema(columns) {
+  const numCols  = [];
+  const dateCols = [];
+  const catCols  = [];
+  
+  columns.forEach(c => {
+    const dtype = state.masterSchema[c];
+    if (dtype === 'NUM') {
+      numCols.push(c);
+    } else if (dtype === 'DATE') {
+      dateCols.push(c);
+    } else {
+      catCols.push(c);
+    }
+  });
+  
   return { numCols, catCols, dateCols };
 }
 
@@ -1337,7 +1395,7 @@ async function switchVizType(msgId, newType, btnEl) {
    CHART.JS RENDERERS
 ════════════════════════════════════════════════════════════════ */
 const CHART_COLORS = [
-  '#16A34A','#22C55E','#3B82F6','#F59E0B','#EF4444',
+  '#2563EB','#3B82F6','#60A5FA','#F59E0B','#EF4444',
   '#8B5CF6','#EC4899','#14B8A6','#F97316','#6366F1',
   '#0EA5E9','#D946EF','#84CC16','#F43F5E','#06B6D4',
 ];
@@ -1372,8 +1430,8 @@ function _renderChart(canvasId, spec) {
   const dataset = {
     label:           series?.label || spec.yLabel || 'Data',
     data:            values,
-    backgroundColor: isPie ? CHART_COLORS : 'rgba(22,163,74,0.18)',
-    borderColor:     isPie ? CHART_COLORS.map(c => c + 'cc') : '#16A34A',
+    backgroundColor: isPie ? CHART_COLORS : 'rgba(37,99,235,0.18)',
+    borderColor:     isPie ? CHART_COLORS.map(c => c + 'cc') : '#2563EB',
     borderWidth:     2,
     pointRadius:     chartJsType === 'scatter' ? 4 : 3,
     fill:            isArea ? true : undefined,

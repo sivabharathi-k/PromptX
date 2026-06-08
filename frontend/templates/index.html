@@ -4,9 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PromptX</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='promptx-logo.svg') }}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
@@ -25,14 +26,7 @@
       </button>
 
       <div class="upload-logo">
-        <span class="upload-logo-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 6h16"/>
-            <path d="M4 12h16"/>
-            <path d="M4 18h16"/>
-          </svg>
-        </span>
-        <div class="upload-logo-text">PromptX</div>
+        <img src="{{ url_for('static', filename='promptx-logo.svg') }}" alt="PromptX" class="upload-logo-img" />
       </div>
 
       <p class="upload-tagline">Talk with your CSV files using plain English</p>
@@ -48,7 +42,7 @@
             <path d="m7 8 5-5 5 5"/>
           </svg>
         </div>
-        <div id="uploadTitleEl" class="upload-card-title">Drag &amp; drop your dataset here</div>
+        <div id="uploadTitleEl" class="upload-card-title">Drag & drop your dataset here</div>
         <div id="uploadHintEl" class="upload-card-hint">or click to browse</div>
         <div class="upload-card-formats">Supports: CSV</div>
       </div>
@@ -73,18 +67,12 @@
     <!-- HEADER -->
     <header class="chat-header">
       <div class="chat-header-left">
-        <button class="btn-icon" id="leftSidebarToggle" title="Toggle quick actions" aria-label="Toggle quick actions">
+        <button class="btn-icon" id="leftSidebarToggle" title="Toggle navigation" aria-label="Toggle navigation">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
         </button>
-        <span class="header-logo-icon" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <path d="M7 7h10"/>
-            <path d="M7 12h10"/>
-            <path d="M7 17h7"/>
-          </svg>
-        </span>
-        <span class="header-logo-text">PromptX</span>
+        <a href="/" class="header-logo-link" aria-label="PromptX Home">
+          <img src="{{ url_for('static', filename='promptx-logo.svg') }}" alt="PromptX" class="header-logo-img" />
+        </a>
       </div>
 
       <div class="chat-header-right">
@@ -121,18 +109,18 @@
 
     <!-- ENTERPRISE MAIN LAYOUT -->
     <div class="chat-layout">
-      <!-- LEFT NAVIGATION (Quick Actions Sidebar) -->
+      <!-- LEFT NAVIGATION (Redesigned Enterprise Sidebar) -->
       <aside class="chat-sidebar left-sidebar" id="leftSidebar">
         <div class="sidebar-header">
-          <span class="sidebar-title uppercase tracking-wider">PromptX</span>
-          <button class="btn-icon sidebar-close" id="leftSidebarClose" aria-label="Close quick actions">
+          <img src="{{ url_for('static', filename='promptx-logo.svg') }}" alt="PromptX" class="sidebar-logo-img" />
+          <button class="btn-icon sidebar-close" id="leftSidebarClose" aria-label="Close navigation">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 6 6 18"/><path d="M6 6l12 12"/>
             </svg>
           </button>
         </div>
         <div class="sidebar-body">
-          <!-- SECTION 1: DATASET OVERVIEW -->
+          <!-- SECTION 1: DATASET OVERVIEW (Card-style stats) -->
           <div class="sidebar-section">
             <div class="sidebar-label">Dataset Overview</div>
             <div class="sidebar-metrics-grid">
@@ -150,14 +138,14 @@
                   <span class="metric-label">Cols</span>
                 </div>
               </div>
-              <div class="metric-widget" title="Numeric Columns">
+              <div class="metric-widget" title="Numerical Features">
                 <i class="ti ti-numbers"></i>
                 <div class="metric-info">
                   <span class="metric-value" id="sbNum">—</span>
                   <span class="metric-label">Num</span>
                 </div>
               </div>
-              <div class="metric-widget" title="Categorical Columns">
+              <div class="metric-widget" title="Categorical Features">
                 <i class="ti ti-tags"></i>
                 <div class="metric-info">
                   <span class="metric-value" id="sbCat">—</span>
@@ -167,67 +155,36 @@
             </div>
           </div>
 
-          <!-- SECTION 2: NAVIGATION -->
+          <!-- SECTION 2: NAVIGATION (Core Navigation Only) -->
           <div class="sidebar-section">
             <div class="sidebar-label">Navigation</div>
             <nav class="sidebar-nav">
-              <button class="sidebar-nav-item" onclick="sendMessage('Show top 10 rows')">
-                <div class="nav-item-icon-box"><i class="ti ti-eye"></i></div>
+              <button class="sidebar-nav-item" data-view="overview" onclick="sendMessage('Show dataset overview')">
+                <span class="nav-item-icon-box"><i class="ti ti-dashboard"></i></span>
+                <span>Overview</span>
+              </button>
+              <button class="sidebar-nav-item" data-view="explore" onclick="sendMessage('Show top 10 rows')">
+                <span class="nav-item-icon-box"><i class="ti ti-eye"></i></span>
                 <span>Explore Data</span>
               </button>
-              <button class="sidebar-nav-item" onclick="sendMessage('Describe the dataset schema')">
-                <div class="nav-item-icon-box"><i class="ti ti-list-details"></i></div>
+              <button class="sidebar-nav-item" data-view="profile" onclick="sendMessage('Describe the dataset schema')">
+                <span class="nav-item-icon-box"><i class="ti ti-list-details"></i></span>
                 <span>Dataset Profile</span>
               </button>
-              <button class="sidebar-nav-item" onclick="loadInsights()">
-                <div class="nav-item-icon-box"><i class="ti ti-bulb"></i></div>
+              <button class="sidebar-nav-item" data-view="insights" onclick="loadInsights()">
+                <span class="nav-item-icon-box"><i class="ti ti-bulb"></i></span>
                 <span>AI Insights</span>
               </button>
-              <button class="sidebar-nav-item" onclick="sendMessage('Show missing values report')">
-                <div class="nav-item-icon-box"><i class="ti ti-alert-triangle"></i></div>
+              <button class="sidebar-nav-item" data-view="quality" onclick="sendMessage('Show missing values report')">
+                <span class="nav-item-icon-box"><i class="ti ti-shield-check"></i></span>
                 <span>Quality Report</span>
               </button>
-              <button class="sidebar-nav-item" onclick="openVizModal('master')">
-                <div class="nav-item-icon-box"><i class="ti ti-chart-bar"></i></div>
-                <span>Visualizations</span>
-              </button>
             </nav>
-          </div>
-
-          <!-- SECTION 3: QUICK ACTIONS -->
-          <div class="sidebar-section">
-            <div class="sidebar-label">Quick Actions</div>
-            <div class="sidebar-nav">
-              <button class="sidebar-nav-item" data-q="Show top 10 rows">
-                <div class="nav-item-icon-box"><i class="ti ti-table-row"></i></div>
-                <span>Show Top Rows</span>
-              </button>
-              <button class="sidebar-nav-item" data-q="Count total rows">
-                <div class="nav-item-icon-box"><i class="ti ti-numbers"></i></div>
-                <span>Count Total Rows</span>
-              </button>
-              <button class="sidebar-nav-item" data-q="Describe dataset schema">
-                <div class="nav-item-icon-box"><i class="ti ti-brain"></i></div>
-                <span>Describe Schema</span>
-              </button>
-              <button class="sidebar-nav-item" data-q="Show missing values report">
-                <div class="nav-item-icon-box"><i class="ti ti-alert-circle"></i></div>
-                <span>Missing Values Report</span>
-              </button>
-              <button class="sidebar-nav-item" data-q="Show business insights">
-                <div class="nav-item-icon-box"><i class="ti ti-bulb"></i></div>
-                <span>Business Insights</span>
-              </button>
-              <button class="sidebar-nav-item" data-q="Visualize this">
-                <div class="nav-item-icon-box"><i class="ti ti-chart-line"></i></div>
-                <span>Visualize Dataset</span>
-              </button>
-            </div>
           </div>
         </div>
         <div class="sidebar-footer">
           <div class="pro-badge">
-            <div class="pro-badge-icon"><i class="ti ti-bolt"></i></div>
+            <div class="pro-badge-icon"><img src="{{ url_for('static', filename='promptx-logo.svg') }}" alt="" class="pro-badge-logo-img" /></div>
             <div class="pro-badge-text">
               <div class="pro-title">PromptX</div>
               <div class="pro-tier">Enterprise Tier</div>
@@ -240,19 +197,30 @@
       <!-- CONVERSATION AREA -->
       <main class="chat-main" id="chatMain">
 
-        <!-- Empty state -->
+        <!-- Empty state (enterprise hero) -->
         <div id="emptyState" class="empty-state">
-          <div class="empty-state-welcome">
-            <div class="welcome-icon">
-              <i class="ti ti-sparkles"></i>
-            </div>
-            <h1 class="welcome-title">Welcome to PromptX</h1>
-            <p class="welcome-sub">
-              Your enterprise workspace is ready. Select a <span class="highlight">Quick Action</span> from the sidebar to get started.
-            </p>
-            <div class="connection-status">
-              <span class="status-dot"></span>
-              <span class="status-text uppercase tracking-widest">Enterprise Engine Connected</span>
+          <div class="hero-center-group" aria-label="PromptX welcome hero">
+                  <div class="empty-state-welcome"> 
+              <div class="welcome-icon">
+                <img src="{{ url_for('static', filename='promptx-logo.svg') }}" alt="PromptX" class="welcome-logo-img" />
+              </div>
+
+              <h1 class="welcome-title">
+                <span class="welcome-title-prompt">Prompt</span>
+                <span class="welcome-title-x">X</span>
+              </h1>
+
+              <div class="hero-input-visual" aria-hidden="true">
+                <div class="hero-input-visual-inner">
+                  <textarea
+                    class="chat-textarea hero-chat-input-visual"
+                    placeholder="Ask anything about your dataset..."
+                    rows="1"
+                    disabled
+                    tabindex="-1"
+                  ></textarea>
+                </div>
+              </div>
             </div>
           </div>
         </div>

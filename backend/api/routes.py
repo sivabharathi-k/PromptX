@@ -25,7 +25,8 @@ from backend.services.insights.insights_engine import generate_insights as gener
 from backend.utils.db_utils import get_schema, load_dataframe
 from backend.utils.file_utils import read_csv
 from backend.utils.active_dataset_store import (
-    load_dataframe_into_active_db, get_active_schema, active_dataset_exists, get_active_connection
+    load_dataframe_into_active_db, get_active_schema, active_dataset_exists, get_active_connection,
+    get_master_schema, get_master_schema_formatted
 )
 from backend.services.insert_service import insert_rows
 from backend.services.update_service import update_rows
@@ -384,6 +385,22 @@ def insights():
 
 
 
+@api.route("/schema", methods=["GET"])
+def get_schema_endpoint():
+    """Return the master schema dict (NUM/TEXT/DATE) for the active dataset."""
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset."}), 400
+
+    master = get_master_schema()
+    if not master:
+        return jsonify({"error": "No schema detected yet."}), 400
+
+    return jsonify({
+        "schema": master,
+        "columns": list(master.keys()),
+    })
+
+
 @api.route("/upload", methods=["POST"])
 def upload():
     """Validate and store an uploaded CSV file."""
@@ -401,13 +418,16 @@ def upload():
     session["file_name"] = filename
     session.modified     = True
 
-    # SQLite is the source of truth
+    # SQLite is the source of truth (also stores master schema)
     load_dataframe_into_active_db(df, if_exists="replace")
 
     # Set initial query results preview
     session["last_result"] = df.to_json(orient="split")
     session["last_query_sql"] = "SELECT * FROM dataset"
     session.modified = True
+
+    # Get the master schema that was just detected
+    master_schema = get_master_schema()
 
     logger.info(
         "Dataset uploaded — file: '%s' | rows: %d | columns: %d | cols: %s",
@@ -418,6 +438,7 @@ def upload():
         "message": f"'{filename}' uploaded successfully.",
         "rows":    len(df),
         "columns": list(df.columns),
+        "schema":  master_schema,  # Include master schema in upload response
     })
 
 

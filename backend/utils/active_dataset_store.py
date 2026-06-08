@@ -9,6 +9,13 @@ This module provides:
 - Return a live sqlite3 connection for services
 - Provide helpers for schema/row inspection
 
+SINGLE SOURCE OF TRUTH FOR SCHEMA:
+- After upload, detect_schema() is called once.
+- The master schema dict is stored in session['master_schema'].
+- ALL modules (sidebar, chatbot, SQL engine, profile, insights, viz, export)
+  use session['master_schema'] as the single source of truth.
+- Schema is a dict: {column_name: "NUM"|"TEXT"|"DATE"}
+
 NOTE: We intentionally do NOT alter the current query pipeline that uses
 session["csv_data"]. New editing APIs will operate on this persistent SQLite.
 """
@@ -20,6 +27,7 @@ import os
 import sqlite3
 import uuid
 from dataclasses import dataclass
+from typing import Dict, Optional
 
 from flask import session
 
@@ -27,6 +35,9 @@ from backend.config.settings import DATA_DIR, SESSIONS_DIR
 from backend.utils.file_utils import read_csv
 
 TABLE_NAME = "dataset"
+
+# Master schema key in Flask session
+MASTER_SCHEMA_KEY = "master_schema"
 
 
 @dataclass(frozen=True)
@@ -68,7 +79,9 @@ def get_active_connection() -> sqlite3.Connection:
 
 
 def load_dataframe_into_active_db(df, *, if_exists: str = "replace") -> None:
-    """Load a pandas DataFrame into the active dataset table."""
+    """Load a pandas DataFrame into the active dataset table.
+    Also detects and stores the master schema in session.
+    """
     conn = get_active_connection()
     try:
         df.to_sql(TABLE_NAME, conn, if_exists=if_exists, index=False)
@@ -76,14 +89,79 @@ def load_dataframe_into_active_db(df, *, if_exists: str = "replace") -> None:
     finally:
         conn.close()
 
+    # Detect and store master schema (single source of truth)
+    from backend.utils.schema_detector import detect_schema
+    master_schema = detect_schema(df)
+    set_master_schema(master_schema)
+
+
+def get_master_schema() -> Optional[Dict[str, str]]:
+    """Get the master schema dict from session.
+    Returns None if no schema has been stored yet.
+    """
+    return session.get(MASTER_SCHEMA_KEY)
+
+
+def get_master_schema_formatted() -> str:
+    """Get formatted master schema string for LLM prompts.
+    Returns empty string if no schema available.
+    """
+    schema = get_master_schema()
+    if not schema:
+        return ""
+    from backend.utils.schema_detector import get_schema_for_sql_prompt
+    return get_schema_for_sql_prompt(schema)
+
+
+def set_master_schema(schema: Dict[str, str]) -> None:
+    """Store the master schema in session."""
+    session[MASTER_SCHEMA_KEY] = schema
+    session.modified = True
+
+
+def clear_master_schema() -> None:
+    """Remove master schema from session."""
+    if MASTER_SCHEMA_KEY in session:
+        del session[MASTER_SCHEMA_KEY]
+        session.modified = True
+
 
 def get_active_schema() -> str:
-    """Return schema description using existing get_schema utility."""
+    """Return schema description using existing get_schema utility.
+    This is the legacy method that returns a human-readable string.
+    """
     from backend.utils.db_utils import get_schema
 
     conn = get_active_connection()
     try:
         return get_schema(conn)
+    finally:
+        conn.close()
+
+
+def get_active_schema_with_types() -> str:
+    """Return schema description enhanced with master schema types.
+    
+    This builds a rich schema string including the master schema types (NUM/TEXT/DATE)
+    rather than raw SQLite types. Used for LLM prompts.
+    """
+    master = get_master_schema()
+    if not master:
+        return get_active_schema()
+
+    conn = get_active_connection()
+    try:
+        from backend.utils.db_utils import get_columns_from_db
+        col_names = get_columns_from_db(conn)
+        lines = [f"Table name: {TABLE_NAME}"]
+        lines.append(f"Schema types: {master}")
+        lines.append(f"Columns: {', '.join(col_names)}")
+        lines.append("")
+        lines.append("Column Details:")
+        for col in col_names:
+            dtype = master.get(col, "TEXT")
+            lines.append(f'  "{col}" type={dtype}')
+        return "\n".join(lines)
     finally:
         conn.close()
 
@@ -98,6 +176,7 @@ def reset_active_dataset() -> None:
     info = get_active_dataset_info()
     if os.path.exists(info.db_path):
         os.remove(info.db_path)
+    clear_master_schema()
 
 
 def ensure_table_exists(conn: sqlite3.Connection) -> None:
@@ -113,4 +192,3 @@ def ensure_table_exists(conn: sqlite3.Connection) -> None:
         # Empty placeholder table; editing services will overwrite with proper schema.
         conn.execute(f"CREATE TABLE {TABLE_NAME} (id INTEGER)")
         conn.commit()
-
