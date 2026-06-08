@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dataset AI — Chat with your Data</title>
+  <title>PromptX</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body data-theme="light">
@@ -31,7 +32,7 @@
             <path d="M4 18h16"/>
           </svg>
         </span>
-        <div class="upload-logo-text">Dataset AI</div>
+        <div class="upload-logo-text">PromptX</div>
       </div>
 
       <p class="upload-tagline">Talk with your CSV files using plain English</p>
@@ -72,6 +73,9 @@
     <!-- HEADER -->
     <header class="chat-header">
       <div class="chat-header-left">
+        <button class="btn-icon" id="leftSidebarToggle" title="Toggle quick actions" aria-label="Toggle quick actions">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        </button>
         <span class="header-logo-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -80,7 +84,7 @@
             <path d="M7 17h7"/>
           </svg>
         </span>
-        <span class="header-logo-text">Dataset AI</span>
+        <span class="header-logo-text">PromptX</span>
       </div>
 
       <div class="chat-header-right">
@@ -115,181 +119,141 @@
       </div>
     </header>
 
-    <!-- DATASET OVERVIEW BANNER (shown after upload, hidden when chat starts) -->
-    <div id="datasetOverview" class="dataset-overview" style="display:none;">
-      <div class="dataset-overview-inner">
-        <div class="overview-cards">
-          <div class="overview-card">
-          <div class="overview-card-icon" style="background:#ECFDF5;color:#16A34A;" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <ellipse cx="12" cy="5" rx="8" ry="3"/>
-              <path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/>
-            </svg>
-          </div>
-            <div class="overview-card-body">
-              <div class="overview-card-value" id="ovRows">—</div>
-              <div class="overview-card-label">Total Rows</div>
-            </div>
-          </div>
-          <div class="overview-card">
-          <div class="overview-card-icon" style="background:#EFF6FF;color:#2563EB;" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12l3-3 4 4 7-7 4 4"/>
-              <path d="M14 7h7v7"/>
-            </svg>
-          </div>
-            <div class="overview-card-body">
-              <div class="overview-card-value" id="ovCols">—</div>
-              <div class="overview-card-label">Columns</div>
-            </div>
-          </div>
-          <div class="overview-card">
-          <div class="overview-card-icon" style="background:#F0FDF4;color:#15803D;" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 9h16"/>
-              <path d="M6 15h12"/>
-              <path d="M10 5l-1 14"/>
-              <path d="M14 5l1 14"/>
-            </svg>
-          </div>
-            <div class="overview-card-body">
-              <div class="overview-card-value" id="ovNumCols">—</div>
-              <div class="overview-card-label">Numeric</div>
-            </div>
-          </div>
-          <div class="overview-card">
-          <div class="overview-card-icon" style="background:#FDF4FF;color:#7E22CE;" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 20h16"/>
-              <path d="M6 20l6-16 6 16"/>
-              <path d="M9 14h6"/>
-            </svg>
-          </div>
-            <div class="overview-card-body">
-              <div class="overview-card-value" id="ovCatCols">—</div>
-              <div class="overview-card-label">Categorical</div>
-            </div>
-          </div>
-        </div>
-        <div class="overview-actions">
-          <button class="overview-action-btn overview-action-primary" onclick="sendMessage('Show top 10 rows')">
-            Explore Data
-          </button>
-          <button class="overview-action-btn" onclick="sendMessage('Describe the dataset schema')">
-            Dataset Profile
-          </button>
-          <button class="overview-action-btn" onclick="loadInsights()">
-            AI Insights
-          </button>
-
-          <button class="overview-action-btn" onclick="sendMessage('Show missing values report')">
-            Quality Report
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- ENTERPRISE MAIN LAYOUT -->
     <div class="chat-layout">
-      <!-- LEFT NAVIGATION (visual only; maps to existing sections) -->
-      <nav class="enterprise-nav" id="enterpriseNav">
-        <div class="enterprise-nav-inner">
-          <div class="enterprise-nav-title">Analytics</div>
-
-          <a class="enterprise-nav-item active" href="#" data-section="explore">
-            <span class="enterprise-nav-icon" aria-hidden="true">▦</span>
-            <span class="enterprise-nav-label">Explore Data</span>
-          </a>
-          <a class="enterprise-nav-item" href="#" data-section="profile">
-            <span class="enterprise-nav-icon" aria-hidden="true">≡</span>
-            <span class="enterprise-nav-label">Dataset Profile</span>
-          </a>
-          <a class="enterprise-nav-item" href="#" data-section="insights">
-            <span class="enterprise-nav-icon" aria-hidden="true">✦</span>
-            <span class="enterprise-nav-label">AI Insights</span>
-          </a>
-          <a class="enterprise-nav-item" href="#" data-section="quality">
-            <span class="enterprise-nav-icon" aria-hidden="true">✓</span>
-            <span class="enterprise-nav-label">Quality Report</span>
-          </a>
-          <a class="enterprise-nav-item" href="#" data-section="visuals">
-            <span class="enterprise-nav-icon" aria-hidden="true">◷</span>
-            <span class="enterprise-nav-label">Visualizations</span>
-          </a>
-
-          <div class="enterprise-nav-spacer"></div>
-
-          <a class="enterprise-nav-item" href="#" data-section="reports">
-            <span class="enterprise-nav-icon" aria-hidden="true">⎙</span>
-            <span class="enterprise-nav-label">Reports</span>
-          </a>
-          <a class="enterprise-nav-item" href="#" data-section="settings">
-            <span class="enterprise-nav-icon" aria-hidden="true">⚙</span>
-            <span class="enterprise-nav-label">Settings</span>
-          </a>
+      <!-- LEFT NAVIGATION (Quick Actions Sidebar) -->
+      <aside class="chat-sidebar left-sidebar" id="leftSidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title uppercase tracking-wider">PromptX</span>
+          <button class="btn-icon sidebar-close" id="leftSidebarClose" aria-label="Close quick actions">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18"/><path d="M6 6l12 12"/>
+            </svg>
+          </button>
         </div>
-      </nav>
+        <div class="sidebar-body">
+          <!-- SECTION 1: DATASET OVERVIEW -->
+          <div class="sidebar-section">
+            <div class="sidebar-label">Dataset Overview</div>
+            <div class="sidebar-metrics-grid">
+              <div class="metric-widget" title="Total Rows">
+                <i class="ti ti-table-row"></i>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbRows">—</span>
+                  <span class="metric-label">Rows</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Columns">
+                <i class="ti ti-columns"></i>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbCols">—</span>
+                  <span class="metric-label">Cols</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Numeric Columns">
+                <i class="ti ti-numbers"></i>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbNum">—</span>
+                  <span class="metric-label">Num</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Categorical Columns">
+                <i class="ti ti-tags"></i>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbCat">—</span>
+                  <span class="metric-label">Cat</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 2: NAVIGATION -->
+          <div class="sidebar-section">
+            <div class="sidebar-label">Navigation</div>
+            <nav class="sidebar-nav">
+              <button class="sidebar-nav-item" onclick="sendMessage('Show top 10 rows')">
+                <div class="nav-item-icon-box"><i class="ti ti-eye"></i></div>
+                <span>Explore Data</span>
+              </button>
+              <button class="sidebar-nav-item" onclick="sendMessage('Describe the dataset schema')">
+                <div class="nav-item-icon-box"><i class="ti ti-list-details"></i></div>
+                <span>Dataset Profile</span>
+              </button>
+              <button class="sidebar-nav-item" onclick="loadInsights()">
+                <div class="nav-item-icon-box"><i class="ti ti-bulb"></i></div>
+                <span>AI Insights</span>
+              </button>
+              <button class="sidebar-nav-item" onclick="sendMessage('Show missing values report')">
+                <div class="nav-item-icon-box"><i class="ti ti-alert-triangle"></i></div>
+                <span>Quality Report</span>
+              </button>
+              <button class="sidebar-nav-item" onclick="openVizModal('master')">
+                <div class="nav-item-icon-box"><i class="ti ti-chart-bar"></i></div>
+                <span>Visualizations</span>
+              </button>
+            </nav>
+          </div>
+
+          <!-- SECTION 3: QUICK ACTIONS -->
+          <div class="sidebar-section">
+            <div class="sidebar-label">Quick Actions</div>
+            <div class="sidebar-nav">
+              <button class="sidebar-nav-item" data-q="Show top 10 rows">
+                <div class="nav-item-icon-box"><i class="ti ti-table-row"></i></div>
+                <span>Show Top Rows</span>
+              </button>
+              <button class="sidebar-nav-item" data-q="Count total rows">
+                <div class="nav-item-icon-box"><i class="ti ti-numbers"></i></div>
+                <span>Count Total Rows</span>
+              </button>
+              <button class="sidebar-nav-item" data-q="Describe dataset schema">
+                <div class="nav-item-icon-box"><i class="ti ti-brain"></i></div>
+                <span>Describe Schema</span>
+              </button>
+              <button class="sidebar-nav-item" data-q="Show missing values report">
+                <div class="nav-item-icon-box"><i class="ti ti-alert-circle"></i></div>
+                <span>Missing Values Report</span>
+              </button>
+              <button class="sidebar-nav-item" data-q="Show business insights">
+                <div class="nav-item-icon-box"><i class="ti ti-bulb"></i></div>
+                <span>Business Insights</span>
+              </button>
+              <button class="sidebar-nav-item" data-q="Visualize this">
+                <div class="nav-item-icon-box"><i class="ti ti-chart-line"></i></div>
+                <span>Visualize Dataset</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="pro-badge">
+            <div class="pro-badge-icon"><i class="ti ti-bolt"></i></div>
+            <div class="pro-badge-text">
+              <div class="pro-title">PromptX</div>
+              <div class="pro-tier">Enterprise Tier</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
 
       <!-- CONVERSATION AREA -->
       <main class="chat-main" id="chatMain">
 
         <!-- Empty state -->
         <div id="emptyState" class="empty-state">
-          <div class="empty-state-icon" aria-hidden="true">
-            <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="4" y="7" width="16" height="14" rx="2"/>
-              <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              <path d="M9 13h.01"/>
-              <path d="M15 13h.01"/>
-              <path d="M9 17c1.5 1.2 4.5 1.2 6 0"/>
-            </svg>
-          </div>
-          <h2 class="empty-state-title">What would you like to know<br>about your dataset?</h2>
-          <p class="empty-state-sub">Ask anything in plain English — I'll generate SQL, run it, and show results.</p>
-
-          <div class="suggestion-grid" id="suggestionGrid">
-            <button class="suggestion-btn" data-q="Show top 10 rows">
-              <span class="suggestion-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-              </span>
-              <span>Show top 10 rows</span>
-            </button>
-            <button class="suggestion-btn" data-q="Count total rows">
-              <span class="suggestion-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4l-10 10"/></svg>
-              </span>
-              <span>Count total rows</span>
-            </button>
-            <button class="suggestion-btn" data-q="Show missing values report">
-              <span class="suggestion-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-              </span>
-              <span>Missing values report</span>
-            </button>
-            <button class="suggestion-btn" data-q="Show unique values in each column">
-              <span class="suggestion-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.5 6L20 10l-6.5 1.9L12 22l-1.5-10.1L4 10l6.5-2z"/></svg>
-              </span>
-              <span>Unique values per column</span>
-            </button>
-            <button class="suggestion-btn" data-q="Describe the dataset schema">
-              <span class="suggestion-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6l2 2v16a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>
-              </span>
-              <span>Describe dataset schema</span>
-            </button>
-            <button class="suggestion-btn" data-q="Show business insights">
-              <span class="suggestion-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12c.9.7 2 2 2 3h4c0-1 1.1-2.3 2-3A7 7 0 0 0 12 2z"/></svg>
-              </span>
-              <span>Business insights</span>
-            </button>
-            <button class="suggestion-btn" data-q="Visualize this">
-              <span class="suggestion-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><path d="M21 12v9H3"/></svg>
-              </span>
-              <span>Visualize this</span>
-            </button>
+          <div class="empty-state-welcome">
+            <div class="welcome-icon">
+              <i class="ti ti-sparkles"></i>
+            </div>
+            <h1 class="welcome-title">Welcome to PromptX</h1>
+            <p class="welcome-sub">
+              Your enterprise workspace is ready. Select a <span class="highlight">Quick Action</span> from the sidebar to get started.
+            </p>
+            <div class="connection-status">
+              <span class="status-dot"></span>
+              <span class="status-text uppercase tracking-widest">Enterprise Engine Connected</span>
+            </div>
           </div>
         </div>
 
@@ -449,20 +413,7 @@
   </div>
 
   <!-- Chart.js -->
-  <script>
-    // Phase-2 UI shell: navigation toggles active styling only.
-    (function(){
-      const nav = document.getElementById('enterpriseNav');
-      if(!nav) return;
-      nav.querySelectorAll('.enterprise-nav-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          e.preventDefault();
-          nav.querySelectorAll('.enterprise-nav-item').forEach(i => i.classList.remove('active'));
-          item.classList.add('active');
-        });
-      });
-    })();
-  </script>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="{{ url_for('static', filename='main.js') }}"></script>
 </body>

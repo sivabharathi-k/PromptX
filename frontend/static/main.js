@@ -8,6 +8,7 @@ const state = {
   chartMap:    {},   // id -> Chart instance
   tableData:   {},   // msgId -> { columns, allRows, page, sql }
   sidebarOpen: true,
+  leftSidebarOpen: true,
   lastSQL:     '',
   // Viz modal state
   vizModal:    { msgId: null, chart: null },
@@ -36,6 +37,9 @@ const emptyState        = document.getElementById('emptyState');
 const messagesContainer = document.getElementById('messagesContainer');
 const chatSidebar       = document.getElementById('chatSidebar');
 const sidebarClose      = document.getElementById('sidebarClose');
+const leftSidebar       = document.getElementById('leftSidebar');
+const leftSidebarToggle = document.getElementById('leftSidebarToggle');
+const leftSidebarClose  = document.getElementById('leftSidebarClose');
 const sbFileName        = document.getElementById('sbFileName');
 const sbDimensions      = document.getElementById('sbDimensions');
 const sbColumns         = document.getElementById('sbColumns');
@@ -140,7 +144,10 @@ function transitionToChat(data) {
   sbDimensions.textContent = `${data.rows.toLocaleString()} rows × ${data.columns.length} columns`;
   buildSidebarColumns(data.columns);
 
-  // Dataset Overview Banner
+  // Initialize master entry for visualizations
+  state.tableData['master'] = { columns: data.columns, allRows: [], page: 0, sql: 'SELECT * FROM dataset' };
+
+  // Dataset Overview in Sidebar
   populateOverview(data);
 
   uploadScreen.style.display = 'none';
@@ -150,8 +157,6 @@ function transitionToChat(data) {
 }
 
 function populateOverview(data) {
-  // Keep Phase-1/2 behavior stable — overview is still controlled by existing upload response.
-
   const cols = data.columns || [];
   const numericHints = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio/;
   const dateHints    = /date|time|year|month|day|period|created|updated/;
@@ -159,12 +164,16 @@ function populateOverview(data) {
   const numCols = cols.filter(c => numericHints.test(c.toLowerCase()));
   const catCols = cols.filter(c => !numericHints.test(c.toLowerCase()) && !dateHints.test(c.toLowerCase()));
 
-  document.getElementById('ovRows').textContent    = data.rows.toLocaleString();
-  document.getElementById('ovCols').textContent    = cols.length;
-  document.getElementById('ovNumCols').textContent = numCols.length;
-  document.getElementById('ovCatCols').textContent = catCols.length;
+  // Target Sidebar IDs
+  const elRows = document.getElementById('sbRows');
+  const elCols = document.getElementById('sbCols');
+  const elNum  = document.getElementById('sbNum');
+  const elCat  = document.getElementById('sbCat');
 
-  datasetOverview.style.display = 'block';
+  if (elRows) elRows.textContent = data.rows.toLocaleString();
+  if (elCols) elCols.textContent = cols.length;
+  if (elNum)  elNum.textContent  = numCols.length;
+  if (elCat)  elCat.textContent  = catCols.length;
 }
 
 function buildSidebarColumns(cols) {
@@ -220,20 +229,45 @@ newChatBtn.addEventListener('click', () => {
 sidebarToggle.addEventListener('click', toggleSidebar);
 sidebarClose.addEventListener('click', toggleSidebar);
 
+if (leftSidebarToggle) leftSidebarToggle.addEventListener('click', toggleLeftSidebar);
+if (leftSidebarClose) leftSidebarClose.addEventListener('click', toggleLeftSidebar);
+
 function toggleSidebar() {
   state.sidebarOpen = !state.sidebarOpen;
   chatSidebar.classList.toggle('hidden', !state.sidebarOpen);
 }
 
+function toggleLeftSidebar() {
+  state.leftSidebarOpen = !state.leftSidebarOpen;
+  leftSidebar.classList.toggle('hidden', !state.leftSidebarOpen);
+}
+
 /* ═══════════════════════════════════════════════════════════════
-   SUGGESTION CHIPS
+   SUGGESTION CHIPS / QUICK ACTIONS
 ════════════════════════════════════════════════════════════════ */
-document.getElementById('suggestionGrid').addEventListener('click', (e) => {
-  const btn = e.target.closest('.suggestion-btn');
-  if (!btn) return;
-  const q = btn.dataset.q;
-  if (q) sendMessage(q);
-});
+// Sidebar Quick Actions
+if (leftSidebar) {
+  leftSidebar.addEventListener('click', (e) => {
+    const btn = e.target.closest('.sidebar-nav-item');
+    if (!btn) return;
+    const q = btn.dataset.q;
+    if (q) {
+      if (window.innerWidth <= 1100) toggleLeftSidebar(); // Close on mobile overlay
+      sendMessage(q);
+    }
+  });
+}
+
+// Legacy suggestion grid
+const suggestionGrid = document.getElementById('suggestionGrid');
+if (suggestionGrid) {
+  suggestionGrid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.suggestion-btn');
+    if (!btn) return;
+    const q = btn.dataset.q;
+    if (q) sendMessage(q);
+  });
+}
 
 /* ═══════════════════════════════════════════════════════════════
    INPUT BAR
@@ -978,6 +1012,13 @@ function switchInlineChart(msgId, newType, btnEl) {
 function openVizModal(msgId) {
   const td = state.tableData[msgId];
   if (!td) return;
+
+  // Handle empty rows (e.g. initial master state)
+  if (td.allRows.length === 0 && msgId === 'master') {
+    sendMessage('Show top 10 rows');
+    alert('Please wait while I load a data sample for visualization...');
+    return;
+  }
 
   state.vizModal.msgId = msgId;
 
