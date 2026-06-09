@@ -281,7 +281,7 @@ sendBtn.addEventListener('click', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   AI INSIGHTS (dedicated endpoint)
+   AI INSIGHTS DASHBOARD (12-section enterprise module)
 ════════════════════════════════════════════════════════════════ */
 async function loadInsights() {
   if (!state.uploaded) return;
@@ -298,7 +298,7 @@ async function loadInsights() {
       <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
       <div class="msg-ai-card">
         <div class="loading-dots"><span></span><span></span><span></span></div>
-        <div class="loading-text">Generating executive insights…</div>
+        <div class="loading-text">Running AI analysis across all dimensions…</div>
       </div>
     </div>`;
   messagesContainer.appendChild(row);
@@ -309,13 +309,12 @@ async function loadInsights() {
     const data = await res.json();
     removeMsg(loadingId);
 
-    if (!res.ok) {
+    if (!res.ok || data.success === false) {
       appendErrorMsg(data.error || 'Insights generation failed.');
       return;
     }
 
-    renderInsightsCards(data.insights || data || []);
-
+    renderInsightsDashboard(data);
     scrollToBottom();
   } catch (e) {
     removeMsg(loadingId);
@@ -323,239 +322,517 @@ async function loadInsights() {
   }
 }
 
-function insightImpactRank(impact) {
-  const v = (impact || '').toUpperCase();
-  if (v === 'HIGH') return 3;
-  if (v === 'MEDIUM') return 2;
-  return 1;
-}
-
-function renderInsightsCards(insights) {
-  // Backwards/forwards compatible: allow {insights:[...]} or raw array
-  if (!Array.isArray(insights) && insights && typeof insights === 'object' && Array.isArray(insights.insights)) {
-    insights = insights.insights;
-  }
-
-  if (!Array.isArray(insights) || !insights.length) {
-
-    messagesContainer.innerHTML = '';
-    appendErrorMsg('No insights available.');
+/* ── Main Dashboard Renderer ── */
+function renderInsightsDashboard(data) {
+  if (!data || data.success === false) {
+    appendErrorMsg(data?.error || 'No insight data available.');
     return;
   }
 
-  const sorted = [...insights].sort((a,b) => insightImpactRank(b.impact) - insightImpactRank(a.impact));
-
-  const container = document.createElement('div');
-  container.style.display = 'flex';
-  container.style.flexDirection = 'column';
-  container.style.gap = '16px';
-
-  sorted.forEach((ins, idx) => {
-    const cardId = `ins-card-${Date.now()}-${idx}`;
-    const impact = (ins.impact || 'LOW').toUpperCase();
-
-    const badgeColor = impact === 'HIGH'
-      ? '#2563EB'
-      : impact === 'MEDIUM'
-        ? '#F59E0B'
-        : '#94A3B8';
-
-    const evidenceText = formatEvidence(ins.evidence);
-
-    const card = document.createElement('div');
-    card.className = 'insight-card';
-    card.id = cardId;
-    card.innerHTML = `
-      <div class="insight-card-header">
-        <span class="insight-badge" style="background:${badgeColor}; color:#fff">${impact}</span>
-        <span class="insight-confidence">Confidence: ${(ins.confidence || 'MEDIUM').toUpperCase()}</span>
+  const msgId = 'insights-dash-' + Date.now();
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai';
+  row.id = msgId;
+  row.innerHTML = `
+    <div class="msg-ai-wrap">
+      <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
+      <div class="msg-ai-card">
+        <div class="insights-dashboard" id="${msgId}-dash"></div>
       </div>
-      <div class="insight-title">${escHtml(ins.title || '')}</div>
-      <div class="insight-summary">${escHtml(ins.summary || '')}</div>
+    </div>`;
+  messagesContainer.appendChild(row);
 
-      <div class="insight-metric-row">
-        ${ins.metric === null || typeof ins.metric === 'undefined' ? '' : `<span class="insight-metric">Metric: ${escHtml(String(ins.metric))}</span>`}
-      </div>
+  const dash = document.getElementById(msgId + '-dash');
+  
+  // Build all 12 sections
+  buildSection1Overview(dash, data);
+  buildSection2Findings(dash, data);
+  buildSection3Stats(dash, data);
+  buildSection4Trends(dash, data);
+  buildSection5Performers(dash, data);
+  buildSection6Outliers(dash, data);
+  buildSection7Correlations(dash, data);
+  buildSection8Quality(dash, data);
+  buildSection9Visuals(dash, data, msgId);
+  buildSection10Business(dash, data);
+  buildSection11Predictive(dash, data);
+  buildSection12Executive(dash, data);
 
-      <div class="insight-chart-wrap">
-        <canvas id="${cardId}-chart"></canvas>
-      </div>
-
-      <div class="insight-evidence">
-        <div class="insight-evidence-label">Evidence</div>
-        <div class="insight-evidence-text">${evidenceText}</div>
-      </div>
-
-      <div class="insight-recommendation">
-        <div class="insight-reco-label">Recommendation</div>
-        <div class="insight-reco-text">${escHtml(ins.recommendation || '')}</div>
-      </div>
-
-      <div class="insight-actions">
-        <button class="toolbar-btn toolbar-btn-primary" onclick="viewInsightDetail(${JSON.stringify(ins)});">View Insight →</button>
-      </div>
-    `;
-
-    container.appendChild(card);
-
-    // Render chart (best-effort)
-    requestAnimationFrame(() => {
-      try {
-        const spec = insightChartSpec(ins);
-        if (spec) renderChartInMsg(cardId + '-tmp', spec, cardId + '-chart');
-      } catch {}
-    });
-  });
-
-  messagesContainer.innerHTML = '';
-  messagesContainer.appendChild(container);
-}
-
-function formatEvidence(evidence) {
-  if (!evidence) return '—';
-  if (typeof evidence === 'string') return escHtml(evidence);
-  try {
-    const entries = Object.entries(evidence).slice(0, 5);
-    if (!entries.length) return '—';
-    return entries.map(([k,v]) => `${escHtml(k)}: ${escHtml(String(v))}`).join('<br>');
-  } catch {
-    return '—';
-  }
-}
-
-function insightChartSpec(ins) {
-  const ct = (ins.chart_type || 'bar').toLowerCase();
-  const cd = ins.chart_data || {};
-
-  // Support 2 formats:
-  // 1) {labels:[], series:[{data:[]}] } style similar to existing spec
-  // 2) scatter points: {points:[{x,y},...]}
-
-  if (ct === 'scatter') {
-    const pts = cd.points || cd.scatter || [];
-    const series = [{ label: 'Data', data: (pts || []).map(p => ({ x: Number(p.x), y: Number(p.y) })) }];
-    return {
-      plotType: 'scatter',
-      title: ins.title || 'Insight',
-      xLabel: 'x',
-      yLabel: 'y',
-      series,
-    };
-  }
-
-  const labels = cd.labels || [];
-  const series = (cd.series && cd.series[0]) ? cd.series[0] : (cd.series || null);
-  const data = (series && series.data) ? series.data : (cd.data || []);
-
-  // If labels/data are missing, fallback placeholder
-  if (!Array.isArray(labels) || !labels.length || !Array.isArray(data) || !data.length) {
-    return {
-      plotType: 'bar',
-      title: ins.title || 'Insight',
-      xLabel: 'Category',
-      yLabel: 'Value',
-      labels: ['—'],
-      series: [{ label: 'Value', data: [0], labels: ['—'] }]
-    };
-  }
-
-  const mappedPlot = ct === 'line' ? 'line'
-    : ct === 'area' ? 'area'
-    : ct === 'histogram' ? 'bar'
-    : ct === 'pie' ? 'pie'
-    : ct === 'donut' ? 'donut'
-    : 'bar';
-
-  return {
-    plotType: mappedPlot,
-    title: ins.title || 'Insight',
-    xLabel: 'Category',
-    yLabel: 'Value',
-    labels,
-    series: [{ label: ins.summary ? 'Value' : 'Value', data, labels }]
-  };
-}
-
-function viewInsightDetail(insight) {
-  // Simple drill-down using an alert-like modal inside chat.
-  // Premium UI refinement can be added later; this unblocks the architecture.
-  const modalId = 'ins-detail-modal';
-  const existing = document.getElementById(modalId);
-  if (existing) existing.remove();
-
-  const impact = (insight.impact || 'LOW').toUpperCase();
-  const badgeColor = impact === 'HIGH' ? '#2563EB' : impact === 'MEDIUM' ? '#F59E0B' : '#94A3B8';
-
-  const overlay = document.createElement('div');
-  overlay.id = modalId;
-  overlay.style.position = 'fixed';
-  overlay.style.inset = '0';
-  overlay.style.background = 'rgba(0,0,0,0.45)';
-  overlay.style.zIndex = '2000';
-  overlay.style.display = 'flex';
-  overlay.style.alignItems = 'center';
-  overlay.style.justifyContent = 'center';
-  overlay.style.padding = '20px';
-
-  const title = escHtml(insight.title || 'Insight');
-  const summary = escHtml(insight.summary || '');
-  const reco = escHtml(insight.recommendation || '');
-  const evidence = formatEvidence(insight.evidence);
-
-  overlay.innerHTML = `
-    <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 16px; width: 100%; max-width: 860px; max-height: 90vh; overflow: auto; padding: 18px;">
-      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
-        <div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span style="background:${badgeColor}; color:#fff; padding:3px 10px; border-radius:999px; font-weight:700; font-size:12px;">${impact}</span>
-            <div style="font-weight:700; font-size:18px;">${title}</div>
-          </div>
-          <div style="margin-top:6px; color: var(--text-muted); font-size:12px;">Generated: ${new Date().toLocaleString()}</div>
-          <div style="margin-top:10px; color: var(--text); font-size:14px;">${summary}</div>
-          <div style="margin-top:10px; display:flex; gap:14px; flex-wrap:wrap;">
-            <div><b>Confidence:</b> ${(insight.confidence || 'MEDIUM').toUpperCase()}</div>
-            <div><b>Chart:</b> ${escHtml(insight.chart_type || 'bar')}</div>
-          </div>
-        </div>
-        <button class="viz-modal-close" id="${modalId}-close" style="height:32px;">✕</button>
-      </div>
-
-      <div style="height:12px;"></div>
-
-      <div style="border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--bg-secondary);">
-        <div style="font-weight:700; text-transform:uppercase; letter-spacing:0.4px; font-size:12px; color: var(--text-muted); margin-bottom:8px;">Visualization</div>
-        <canvas id="${modalId}-canvas" style="max-height: 320px;"></canvas>
-      </div>
-
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
-        <div style="border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--bg-secondary);">
-          <div style="font-weight:700; text-transform:uppercase; letter-spacing:0.4px; font-size:12px; color: var(--text-muted); margin-bottom:8px;">Evidence</div>
-          <div style="font-size:13px; color: var(--text-mid);">${evidence}</div>
-        </div>
-        <div style="border:1px solid var(--border); border-radius:12px; padding:12px; background: var(--bg-secondary);">
-          <div style="font-weight:700; text-transform:uppercase; letter-spacing:0.4px; font-size:12px; color: var(--text-muted); margin-bottom:8px;">Recommendation</div>
-          <div style="font-size:13px; color: var(--text-mid);">${reco}</div>
-        </div>
-      </div>
-
-      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap;">
-        <button class="toolbar-btn" onclick="alert('View Data is not implemented yet.');">View Data</button>
-        <button class="toolbar-btn" onclick="alert('View Calculation is not implemented yet.');">View Calculation</button>
-        <button class="toolbar-btn" onclick="alert('Export Insight is not implemented yet.');">Export Insight</button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-  document.getElementById(`${modalId}-close`).addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
+  // Render charts
   requestAnimationFrame(() => {
-    try {
-      const spec = insightChartSpec(insight);
-      const tmpId = modalId + '-chart';
-      renderChartInMsg(tmpId, spec, `${modalId}-canvas`);
-    } catch {}
+    renderInsightCharts(data, msgId);
+  });
+}
+
+/* ── Section 1: Dataset Overview ── */
+function buildSection1Overview(dash, data) {
+  const ov = data.dataset_overview || {};
+  const sec = createSection(dash, '1', '📊', 'Dataset Overview', 'Summary of your data');
+  
+  const grid = document.createElement('div');
+  grid.className = 'insights-overview-grid';
+  
+  const kpis = [
+    { label: 'Total Rows', value: (ov.total_rows || 0).toLocaleString(), desc: 'Records' },
+    { label: 'Columns', value: ov.total_columns || 0, desc: `${ov.numeric_columns || 0} num · ${ov.categorical_columns || 0} cat` },
+    { label: 'Type', value: ov.dataset_type || 'Generic', desc: 'Detected domain' },
+    { label: 'Missing', value: (ov.total_missing_values || 0).toLocaleString(), desc: 'Empty cells' },
+    { label: 'Duplicates', value: (ov.total_duplicate_records || 0).toLocaleString(), desc: 'Repeated rows' },
+    { label: 'Memory', value: (ov.memory_usage_mb || 0) + ' MB', desc: 'RAM usage' },
+  ];
+  
+  kpis.forEach(k => {
+    const card = document.createElement('div');
+    card.className = 'insights-kpi-card';
+    card.innerHTML = `
+      <div class="insights-kpi-label">${escHtml(k.label)}</div>
+      <div class="insights-kpi-value">${escHtml(k.value)}</div>
+      <div class="insights-kpi-desc">${escHtml(k.desc)}</div>`;
+    grid.appendChild(card);
+  });
+  sec.appendChild(grid);
+  
+  if (ov.description) {
+    const desc = document.createElement('div');
+    desc.className = 'insights-desc-card';
+    desc.innerHTML = parseMarkdown(ov.description || '');
+    sec.appendChild(desc);
+  }
+}
+
+/* ── Section 2: Key Findings ── */
+function buildSection2Findings(dash, data) {
+  const findings = data.key_findings || [];
+  if (!findings.length) return;
+  
+  const sec = createSection(dash, '2', '🔍', 'Key Findings', 'Most important patterns discovered');
+  const grid = document.createElement('div');
+  grid.className = 'insights-findings-grid';
+  
+  findings.forEach(f => {
+    const type = f.type || 'discovery';
+    const card = document.createElement('div');
+    card.className = 'insights-finding-card';
+    card.innerHTML = `
+      <div class="insights-finding-type finding-type-${type}">${escHtml(type)}</div>
+      <div class="insights-finding-title">${escHtml(f.title || '')}</div>
+      <div class="insights-finding-desc">${escHtml(f.explanation || '')}</div>
+      <div class="insights-confidence-badge confidence-${(f.confidence || 'medium').toLowerCase()}">${escHtml(f.confidence || 'MEDIUM')}</div>`;
+    grid.appendChild(card);
+  });
+  sec.appendChild(grid);
+}
+
+/* ── Section 3: Statistical Analysis ── */
+function buildSection3Stats(dash, data) {
+  const stats = data.statistical_analysis || [];
+  if (!stats.length) return;
+  
+  const sec = createSection(dash, '3', '📈', 'Statistical Analysis', 'Mean, median, distribution & variability');
+  
+  const wrap = document.createElement('div');
+  wrap.className = 'insights-stats-wrap';
+  let html = `<table class="insights-stats-table"><thead><tr>
+    <th>Column</th><th>Count</th><th>Mean</th><th>Median</th><th>Mode</th><th>Std</th><th>Min</th><th>Max</th><th>Q1</th><th>Q3</th><th>Skew</th><th>Variability</th>
+  </tr></thead><tbody>`;
+  
+  stats.forEach(s => {
+    html += `<tr>
+      <td><strong>${escHtml(s.column)}</strong></td>
+      <td>${s.count}</td>
+      <td>${s.mean !== null && s.mean !== undefined ? s.mean : '—'}</td>
+      <td>${s.median !== null && s.median !== undefined ? s.median : '—'}</td>
+      <td>${s.mode !== null && s.mode !== undefined ? s.mode : '—'}</td>
+      <td>${s.std !== null && s.std !== undefined ? s.std : '—'}</td>
+      <td>${s.min !== null && s.min !== undefined ? s.min : '—'}</td>
+      <td>${s.max !== null && s.max !== undefined ? s.max : '—'}</td>
+      <td>${s.q1 !== null && s.q1 !== undefined ? s.q1 : '—'}</td>
+      <td>${s.q3 !== null && s.q3 !== undefined ? s.q3 : '—'}</td>
+      <td>${escHtml(s.skewness || '—')}</td>
+      <td>${escHtml(s.variability || '—')}</td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  sec.appendChild(wrap);
+  
+  // Notable stats
+  const notable = data.notable_statistics || [];
+  if (notable.length) {
+    const list = document.createElement('div');
+    list.className = 'insights-notable-list';
+    notable.forEach(n => {
+      const item = document.createElement('div');
+      item.className = 'insights-notable-item';
+      item.textContent = n;
+      list.appendChild(item);
+    });
+    sec.appendChild(list);
+  }
+}
+
+/* ── Section 4: Trends & Patterns ── */
+function buildSection4Trends(dash, data) {
+  const trends = data.trends || [];
+  if (!trends.length) {
+    // Skip gracefully - no date columns
+    return;
+  }
+  
+  const sec = createSection(dash, '4', '📉', 'Trends & Patterns', 'Time-based patterns detected');
+  
+  trends.forEach(t => {
+    const card = document.createElement('div');
+    card.className = 'insights-trend-card';
+    card.innerHTML = `
+      <div class="insights-trend-header">
+        <div class="insights-trend-title">${escHtml(t.metric || '')} over ${escHtml(t.date_column || 'time')}</div>
+        <div class="insights-trend-direction trend-${t.direction || 'upward'}">${escHtml(t.direction || '')} (${escHtml(t.strength || '')})</div>
+      </div>
+      <div class="insights-trend-detail">
+        Slope: ${t.slope || 0} · ${t.periods || 0} time periods analyzed<br>
+        <strong>Direction:</strong> ${escHtml(t.direction || 'stable')} · <strong>Strength:</strong> ${escHtml(t.strength || 'moderate')}
+      </div>`;
+    
+    // Add monthly data preview
+    if (t.monthly_data && t.monthly_data.length) {
+      const dataList = document.createElement('div');
+      dataList.style.marginTop = '8px';
+      dataList.style.fontSize = '11px';
+      dataList.style.color = 'var(--text-faint)';
+      dataList.innerHTML = '<strong>Periods:</strong> ' + t.monthly_data.slice(-5).map(m => `${escHtml(m.period)} (${m.mean})`).join(' · ');
+      card.appendChild(dataList);
+    }
+    
+    sec.appendChild(card);
+  });
+}
+
+/* ── Section 5: Top Performers ── */
+function buildSection5Performers(dash, data) {
+  const performers = data.top_performers || [];
+  if (!performers.length) return;
+  
+  const sec = createSection(dash, '5', '🏆', 'Top Performers', 'Best entities by key metric');
+  
+  performers.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'insights-performer-card';
+    card.innerHTML = `
+      <div class="insights-performer-header">
+        <div class="insights-performer-title">By ${escHtml(p.category_column || 'category')}</div>
+        <div class="insights-performer-sub">Metric: ${escHtml(p.metric || '')} · Total: ${p.total !== null && p.total !== undefined ? p.total.toLocaleString() : 'N/A'}</div>
+      </div>
+      <div class="insights-performer-list">`;
+    
+    (p.top_items || []).slice(0, 5).forEach((item, i) => {
+      const rank = i + 1;
+      card.innerHTML += `
+        <div class="insights-performer-item">
+          <div class="performer-rank">${rank}</div>
+          <div class="performer-name">${escHtml(item.name || '')}</div>
+          <div class="performer-value">${item.mean !== null && item.mean !== undefined ? item.mean.toFixed(2) : '—'}</div>
+          <div class="performer-pct">${item.contribution_pct !== null && item.contribution_pct !== undefined ? item.contribution_pct.toFixed(1) + '%' : ''}</div>
+        </div>`;
+    });
+    
+    card.innerHTML += '</div>';
+    sec.appendChild(card);
+  });
+}
+
+/* ── Section 6: Outliers & Anomalies ── */
+function buildSection6Outliers(dash, data) {
+  const outliers = data.outliers_anomalies || [];
+  if (!outliers.length) return;
+  
+  const sec = createSection(dash, '6', '⚠️', 'Outliers & Anomalies', 'Statistical outliers detected via IQR');
+  
+  outliers.forEach(o => {
+    const sev = (o.severity || 'low').toLowerCase();
+    const card = document.createElement('div');
+    card.className = 'insights-outlier-card';
+    card.innerHTML = `
+      <div class="insights-outlier-header">
+        <div class="insights-outlier-title">${escHtml(o.column || '')}</div>
+        <div class="insights-outlier-severity severity-${sev}">${escHtml(o.severity || 'LOW')}</div>
+      </div>
+      <div class="insights-outlier-detail">
+        ${o.total_outliers || 0} outliers (${o.outlier_pct || 0}% of values)
+      </div>
+      <div class="insights-outlier-stats">
+        <span class="insights-outlier-stat">▼ Low: ${o.low_outliers || 0}</span>
+        <span class="insights-outlier-stat">▲ High: ${o.high_outliers || 0}</span>
+        <span class="insights-outlier-stat">Q1: ${o.q1 || '—'}</span>
+        <span class="insights-outlier-stat">Q3: ${o.q3 || '—'}</span>
+        <span class="insights-outlier-stat">IQR: ${o.iqr || '—'}</span>
+      </div>`;
+    sec.appendChild(card);
+  });
+}
+
+/* ── Section 7: Correlation Analysis ── */
+function buildSection7Correlations(dash, data) {
+  const corr = data.correlation_analysis || {};
+  const pos = corr.strong_positive || [];
+  const neg = corr.strong_negative || [];
+  
+  if (!pos.length && !neg.length) return;
+  
+  const sec = createSection(dash, '7', '🔗', 'Correlation Analysis', 'Strong relationships between variables');
+  const grid = document.createElement('div');
+  grid.className = 'insights-corr-grid';
+  
+  if (pos.length) {
+    pos.slice(0, 5).forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'insights-corr-card';
+      card.innerHTML = `
+        <div class="insights-corr-type corr-positive">Strong Positive</div>
+        <div class="insights-corr-pair">${escHtml(p.var1 || '')} ↔ ${escHtml(p.var2 || '')}</div>
+        <div class="insights-corr-value">r = ${p.r !== null && p.r !== undefined ? p.r.toFixed(3) : '—'}</div>`;
+      grid.appendChild(card);
+    });
+  }
+  
+  if (neg.length) {
+    neg.slice(0, 5).forEach(n => {
+      const card = document.createElement('div');
+      card.className = 'insights-corr-card';
+      card.innerHTML = `
+        <div class="insights-corr-type corr-negative">Strong Negative</div>
+        <div class="insights-corr-pair">${escHtml(n.var1 || '')} ↔ ${escHtml(n.var2 || '')}</div>
+        <div class="insights-corr-value">r = ${n.r !== null && n.r !== undefined ? n.r.toFixed(3) : '—'}</div>`;
+      grid.appendChild(card);
+    });
+  }
+  
+  sec.appendChild(grid);
+}
+
+/* ── Section 8: Data Quality Report ── */
+function buildSection8Quality(dash, data) {
+  const q = data.data_quality_report || {};
+  const missing = q.missing_values || {};
+  const dupes = q.duplicates || {};
+  
+  const sec = createSection(dash, '8', '🛡️', 'Data Quality Report', 'Completeness and cleanliness');
+  const grid = document.createElement('div');
+  grid.className = 'insights-quality-grid';
+  
+  // Missing values card
+  const missingCard = document.createElement('div');
+  missingCard.className = 'insights-quality-card';
+  missingCard.innerHTML = `
+    <div class="insights-quality-header">
+      <div class="insights-quality-label">Missing Values</div>
+      <div class="insights-quality-severity severity-${(missing.columns_with_missing > 0 ? 'medium' : 'low')}">${missing.columns_with_missing > 0 ? 'Has Missing' : 'Clean'}</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">
+      Total missing cells: <strong>${(missing.total_missing_cells || 0).toLocaleString()}</strong><br>
+      Columns affected: <strong>${missing.columns_with_missing || 0}</strong> / ${q.total_columns || 0}
+    </div>`;
+  grid.appendChild(missingCard);
+  
+  // Missing column details
+  if (missing.column_details && missing.column_details.length) {
+    missing.column_details.slice(0, 5).forEach(d => {
+      const sev = (d.severity || 'low').toLowerCase();
+      const card = document.createElement('div');
+      card.className = 'insights-quality-card';
+      card.innerHTML = `
+        <div class="insights-quality-header">
+          <div class="insights-quality-label">${escHtml(d.column || '')}</div>
+          <div class="insights-quality-severity severity-${sev}">${escHtml(d.severity || 'LOW')}</div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);">
+          ${d.total_missing || 0} missing · ${d.missing_pct || 0}% of values
+          ${d.nulls > 0 ? ` · ${d.nulls} nulls` : ''}
+          ${d.blanks > 0 ? ` · ${d.blanks} blanks` : ''}
+        </div>`;
+      grid.appendChild(card);
+    });
+  }
+  
+  // Duplicates card
+  if (dupes.total_duplicate_rows > 0) {
+    const dupeCard = document.createElement('div');
+    dupeCard.className = 'insights-quality-card';
+    dupeCard.innerHTML = `
+      <div class="insights-quality-header">
+        <div class="insights-quality-label">Duplicate Records</div>
+        <div class="insights-quality-severity severity-${(dupes.severity || 'low').toLowerCase()}">${escHtml(dupes.severity || 'LOW')}</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);">
+        ${dupes.total_duplicate_rows || 0} duplicate rows (${dupes.duplicate_pct || 0}% of data)
+      </div>`;
+    grid.appendChild(dupeCard);
+  }
+  
+  sec.appendChild(grid);
+}
+
+/* ── Section 9: Visual Insights ── */
+function buildSection9Visuals(dash, data, msgId) {
+  const visuals = data.visual_insights || [];
+  if (!visuals.length) return;
+  
+  const sec = createSection(dash, '9', '🎨', 'Visual Insights', 'Auto-generated charts from your data');
+  const grid = document.createElement('div');
+  grid.className = 'insights-viz-grid';
+  
+  visuals.forEach((v, i) => {
+    const vizId = `${msgId}-viz-${i}`;
+    const card = document.createElement('div');
+    card.className = 'insights-viz-card';
+    card.innerHTML = `
+      <div class="insights-viz-title">${escHtml(v.title || 'Chart')}</div>
+      <div class="insights-viz-canvas-wrap">
+        <canvas id="${vizId}"></canvas>
+      </div>
+      <div class="insights-viz-explanation">${escHtml(v.title || '')} — ${escHtml(v.chart_type || '')} visualization</div>`;
+    grid.appendChild(card);
+    
+    // Store canvas info for later rendering
+    card.dataset.vizId = vizId;
+    card.dataset.chartType = v.chart_type || 'bar';
+    card.dataset.chartData = JSON.stringify(v.chart_data || {});
+  });
+  
+  sec.appendChild(grid);
+}
+
+/* ── Section 10: Business Insights ── */
+function buildSection10Business(dash, data) {
+  const biz = data.business_insights || [];
+  if (!biz.length) return;
+  
+  const sec = createSection(dash, '10', '💡', 'Business Insights', 'Actionable data-driven recommendations');
+  const grid = document.createElement('div');
+  grid.className = 'insights-biz-grid';
+  
+  biz.forEach(b => {
+    const pri = (b.priority || 'medium').toLowerCase();
+    const card = document.createElement('div');
+    card.className = 'insights-biz-card';
+    card.innerHTML = `
+      <div class="insights-biz-priority priority-${pri}">${escHtml(b.priority || 'MEDIUM')} Priority</div>
+      <div class="insights-biz-title">${escHtml(b.title || '')}</div>
+      <div class="insights-biz-desc">${escHtml(b.description || '')}</div>
+      ${b.action ? `<div class="insights-biz-action">${escHtml(b.action)}</div>` : ''}`;
+    grid.appendChild(card);
+  });
+  
+  sec.appendChild(grid);
+}
+
+/* ── Section 11: Predictive Opportunities ── */
+function buildSection11Predictive(dash, data) {
+  const preds = data.predictive_opportunities || [];
+  if (!preds.length) return;
+  
+  const sec = createSection(dash, '11', '🤖', 'Predictive Opportunities', 'Machine Learning potential');
+  const grid = document.createElement('div');
+  grid.className = 'insights-pred-grid';
+  
+  preds.forEach(p => {
+    const fea = (p.feasibility || 'medium').toLowerCase();
+    const feaColor = fea === 'high' ? '#86EFAC' : fea === 'medium' ? '#FCD34D' : '#FCA5A5';
+    const card = document.createElement('div');
+    card.className = 'insights-pred-card';
+    card.innerHTML = `
+      <div class="insights-pred-title">${escHtml(p.title || '')}</div>
+      <div class="insights-pred-desc">${escHtml(p.description || '')}</div>
+      ${p.target ? `<div style="font-size:11px;color:var(--text-faint);margin-top:4px;">Target: <strong>${escHtml(p.target)}</strong></div>` : ''}
+      <div class="insights-pred-feasibility" style="color:${feaColor}">Feasibility: ${escHtml(p.feasibility || 'MEDIUM')}</div>`;
+    grid.appendChild(card);
+  });
+  
+  sec.appendChild(grid);
+}
+
+/* ── Section 12: Executive Summary ── */
+function buildSection12Executive(dash, data) {
+  const exec = data.executive_summary || [];
+  if (!exec.length) return;
+  
+  const sec = createSection(dash, '12', '📋', 'AI Executive Summary', 'Key takeaways and recommendations');
+  const list = document.createElement('div');
+  list.className = 'insights-exec-list';
+  
+  exec.forEach((point, i) => {
+    const item = document.createElement('div');
+    item.className = 'insights-exec-item';
+    item.innerHTML = `
+      <div class="insights-exec-bullet">${i + 1}</div>
+      <div>${parseMarkdown(point || '')}</div>`;
+    list.appendChild(item);
+  });
+  
+  sec.appendChild(list);
+}
+
+/* ── Helper: Create a section container ── */
+function createSection(parent, num, icon, title, subtitle) {
+  const section = document.createElement('div');
+  section.className = 'insights-section';
+  section.innerHTML = `
+    <div class="insights-section-header">
+      <div class="insights-section-icon">${icon}</div>
+      <div>
+        <div class="insights-section-title">${title}</div>
+        <div class="insights-section-subtitle">${subtitle}</div>
+      </div>
+    </div>`;
+  parent.appendChild(section);
+  return section;
+}
+
+/* ── Render Insight Charts (after DOM ready) ── */
+function renderInsightCharts(data, msgId) {
+  const visuals = data.visual_insights || [];
+  visuals.forEach((v, i) => {
+    const vizId = `${msgId}-viz-${i}`;
+    const canvas = document.getElementById(vizId);
+    if (!canvas) return;
+    
+    const chartData = v.chart_data || {};
+    const chartType = v.chart_type || 'bar';
+    
+    let spec = null;
+    if (chartType === 'bar' || chartType === 'histogram') {
+      const labels = chartData.labels || [];
+      const series = chartData.series?.[0]?.data || [];
+      if (labels.length && series.length) {
+        spec = { plotType: 'bar', title: v.title || '', xLabel: v.x_label || '', yLabel: v.y_label || '', labels, series: [{ label: 'Value', data: series, labels }] };
+      }
+    } else if (chartType === 'line') {
+      const labels = chartData.labels || [];
+      const series = chartData.series?.[0]?.data || [];
+      if (labels.length && series.length) {
+        spec = { plotType: 'line', title: v.title || '', xLabel: v.x_label || '', yLabel: v.y_label || '', labels, series: [{ label: 'Value', data: series, labels }] };
+      }
+    } else if (chartType === 'pie') {
+      const labels = chartData.labels || [];
+      const series = chartData.series?.[0]?.data || [];
+      if (labels.length && series.length) {
+        spec = { plotType: 'pie', title: v.title || '', labels, series: [{ label: 'Distribution', data: series, labels }] };
+      }
+    } else if (chartType === 'heatmap') {
+      // Heatmaps are data tables, skip Chart.js rendering
+      return;
+    } else if (chartType === 'box') {
+      return;
+    }
+    
+    if (spec) {
+      try {
+        _renderChart(vizId, spec);
+      } catch (e) {
+        // Silently skip chart render errors
+      }
+    }
   });
 }
 

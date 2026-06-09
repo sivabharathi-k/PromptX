@@ -369,8 +369,9 @@ def insights():
     try:
         payload = generate_insights_engine()
         # Always return a JSON object with a stable shape
-        if isinstance(payload, dict) and "insights" in payload:
-            payload["success"] = True
+        if isinstance(payload, dict):
+            if "success" not in payload:
+                payload["success"] = True
         return jsonify(payload)
     except Exception as e:
         import traceback
