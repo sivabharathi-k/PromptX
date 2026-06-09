@@ -45,7 +45,6 @@
 
   --header-h:        60px;
   --left-sidebar-w:  288px;
-  --right-sidebar-w: 320px;
   --max-chat-w:      760px;
 
   --font:            'Inter', system-ui, -apple-system, sans-serif;
@@ -554,7 +553,7 @@ body[data-theme="light"] .chat-header {
 ════════════════════════════════════════════════════════════════ */
 .chat-layout {
   display: grid;
-  grid-template-columns: var(--left-sidebar-w) 1fr var(--right-sidebar-w);
+  grid-template-columns: var(--left-sidebar-w) 1fr;
   height: calc(100vh - var(--header-h));
   overflow: hidden;
 }
@@ -587,13 +586,6 @@ body[data-theme="light"] .chat-header {
   grid-column: 1;
   width: var(--left-sidebar-w);
   border-right: 1px solid var(--glass-border-2);
-}
-
-/* Right sidebar */
-#chatSidebar {
-  grid-column: 3;
-  width: var(--right-sidebar-w);
-  border-left: 1px solid var(--glass-border-2);
 }
 
 .chat-sidebar.hidden {

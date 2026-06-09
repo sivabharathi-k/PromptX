@@ -31,19 +31,13 @@ const uploadError       = document.getElementById('uploadError');
 
 const datasetName       = document.getElementById('datasetName');
 const datasetMeta       = document.getElementById('datasetMeta');
-const sidebarToggle     = document.getElementById('sidebarToggle');
 const newChatBtn        = document.getElementById('newChatBtn');
 const chatMain          = document.getElementById('chatMain');
 const emptyState        = document.getElementById('emptyState');
 const messagesContainer = document.getElementById('messagesContainer');
-const chatSidebar       = document.getElementById('chatSidebar');
-const sidebarClose      = document.getElementById('sidebarClose');
 const leftSidebar       = document.getElementById('leftSidebar');
 const leftSidebarToggle = document.getElementById('leftSidebarToggle');
 const leftSidebarClose  = document.getElementById('leftSidebarClose');
-const sbFileName        = document.getElementById('sbFileName');
-const sbDimensions      = document.getElementById('sbDimensions');
-const sbColumns         = document.getElementById('sbColumns');
 const datasetOverview   = document.getElementById('datasetOverview');
 
 const inputBarWrap      = document.querySelector('.input-bar-wrap');
@@ -144,10 +138,6 @@ function transitionToChat(data) {
   datasetName.textContent = state.dataset.name;
   datasetMeta.textContent = `${data.rows.toLocaleString()} rows · ${data.columns.length} cols`;
 
-  sbFileName.textContent   = state.dataset.name;
-  sbDimensions.textContent = `${data.rows.toLocaleString()} rows × ${data.columns.length} columns`;
-  buildSidebarColumns(data.columns);
-
   // Initialize master entry for visualizations
   state.tableData['master'] = { columns: data.columns, allRows: [], page: 0, sql: 'SELECT * FROM dataset' };
 
@@ -187,27 +177,6 @@ function populateOverview(data) {
   if (elCols) elCols.textContent = cols.length;
   if (elNum)  elNum.textContent  = numCols.length;
   if (elCat)  elCat.textContent  = catCols.length;
-}
-
-function buildSidebarColumns(cols) {
-  sbColumns.innerHTML = '';
-  cols.forEach(c => {
-    const div = document.createElement('div');
-    div.className = 'sb-col-item';
-    // Use master schema as single source of truth
-    const dtype = state.masterSchema[c] || 'TEXT';
-    let typeClass = 'type-text', typeLabel = 'TEXT';
-    if (dtype === 'NUM') {
-      typeClass = 'type-num'; typeLabel = 'NUM';
-    } else if (dtype === 'DATE') {
-      typeClass = 'type-date'; typeLabel = 'DATE';
-    }
-    div.innerHTML = `
-      <span class="sb-col-name" title="${escHtml(c)}">${escHtml(c)}</span>
-      <span class="sb-col-type ${typeClass}">${typeLabel}</span>
-    `;
-    sbColumns.appendChild(div);
-  });
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -259,17 +228,9 @@ newChatBtn.addEventListener('click', () => {
 
 /* ═══════════════════════════════════════════════════════════════
    SIDEBAR TOGGLE
-════════════════════════════════════════════════════════════════ */
-sidebarToggle.addEventListener('click', toggleSidebar);
-sidebarClose.addEventListener('click', toggleSidebar);
-
+   ════════════════════════════════════════════════════════════════ */
 if (leftSidebarToggle) leftSidebarToggle.addEventListener('click', toggleLeftSidebar);
 if (leftSidebarClose) leftSidebarClose.addEventListener('click', toggleLeftSidebar);
-
-function toggleSidebar() {
-  state.sidebarOpen = !state.sidebarOpen;
-  chatSidebar.classList.toggle('hidden', !state.sidebarOpen);
-}
 
 function toggleLeftSidebar() {
   state.leftSidebarOpen = !state.leftSidebarOpen;
