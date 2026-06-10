@@ -28,5 +28,5 @@ LOGS_DIR     = os.path.join(DATA_DIR, "logs")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 
 # ── Upload ────────────────────────────────────────────────────
-ALLOWED_EXTENSIONS = {"csv"}
+ALLOWED_EXTENSIONS = {"csv", "xlsx", "xls"}
 MAX_ROWS_IN_SESSION = 50_000

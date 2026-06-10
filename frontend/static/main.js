@@ -11,6 +11,7 @@ const state = {
   sidebarOpen: true,
   leftSidebarOpen: true,
   lastSQL:     '',
+  overview:    null,
   // Viz modal state
   vizModal:    { msgId: null, chart: null },
 };
@@ -81,8 +82,9 @@ uploadZone.addEventListener('drop', (e) => {
 });
 
 async function doUpload(file) {
-  if (!file.name.toLowerCase().endsWith('.csv')) {
-    showUploadError('Only CSV files are supported.');
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['csv', 'xlsx', 'xls'].includes(ext)) {
+    showUploadError('Only CSV (.csv) and Excel (.xlsx, .xls) files are supported.');
     return;
   }
   uploadError.style.display = 'none';
@@ -151,32 +153,194 @@ function transitionToChat(data) {
 }
 
 function populateOverview(data) {
-  const cols = data.columns || [];
-  
-  // Use master schema for NUM/DATE/TEXT breakdown if available
-  let numCols, catCols;
-  if (Object.keys(state.masterSchema).length > 0) {
-    const classified = classifyColumnsFromSchema(cols);
-    numCols = classified.numCols;
-    catCols = classified.catCols;
-  } else {
-    // Fallback: old heuristic-based classification
-    const numericHints = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio/;
-    const dateHints    = /date|time|year|month|day|period|created|updated/;
-    numCols = cols.filter(c => numericHints.test(c.toLowerCase()));
-    catCols = cols.filter(c => !numericHints.test(c.toLowerCase()) && !dateHints.test(c.toLowerCase()));
+  // Fetch full overview from backend for enhanced data
+  fetch('/dataset-overview')
+    .then(res => res.json())
+    .then(overview => {
+      if (!overview.success) return;
+      state.overview = overview;
+      
+      const elRows = document.getElementById('sbRows');
+      const elCols = document.getElementById('sbCols');
+      const elSize = document.getElementById('sbSize');
+      const elNum  = document.getElementById('sbNum');
+      const elCat  = document.getElementById('sbCat');
+      const elDate = document.getElementById('sbDate');
+      const elBool = document.getElementById('sbBool');
+      const elMissing = document.getElementById('sbMissing');
+      const elDupes   = document.getElementById('sbDupes');
+      const elHealth  = document.getElementById('sbHealth');
+
+      if (elRows) elRows.textContent = overview.total_records.toLocaleString();
+      if (elCols) elCols.textContent = overview.total_columns;
+      if (elSize) elSize.textContent = overview.dataset_size;
+      if (elNum)  elNum.textContent  = overview.column_types.numeric;
+      if (elCat)  elCat.textContent  = overview.column_types.categorical;
+      if (elDate) elDate.textContent = overview.column_types.date;
+      if (elBool) elBool.textContent = overview.column_types.boolean;
+      
+      // Missing values
+      const mv = overview.data_quality.total_missing_values;
+      const mp = overview.data_quality.missing_percentage;
+      if (elMissing) {
+        elMissing.textContent = mv > 0 ? `${mv.toLocaleString()} (${mp}%)` : '0';
+        elMissing.title = mv > 0 ? `${mv.toLocaleString()} missing (${mp}%)` : 'No missing values';
+      }
+      
+      // Duplicates
+      const dupes = overview.data_quality.duplicate_records;
+      if (elDupes) elDupes.textContent = dupes > 0 ? dupes.toLocaleString() : '0';
+      
+      // Health score
+      const hs = overview.health_score;
+      if (elHealth) elHealth.textContent = `${hs.score}`;
+      elHealth.style.setProperty('--health-score', hs.score / 100);
+      
+      // Update dataset meta if available
+      const datasetMeta = document.getElementById('datasetMeta');
+      if (datasetMeta) {
+        datasetMeta.textContent = `${overview.total_records.toLocaleString()} rows · ${overview.total_columns} cols · ${overview.dataset_size}`;
+      }
+    })
+    .catch(err => {
+      console.warn('Failed to fetch dataset overview:', err);
+      // Fallback: use basic upload data
+      const cols = data.columns || [];
+      const elRows = document.getElementById('sbRows');
+      const elCols = document.getElementById('sbCols');
+      const elNum  = document.getElementById('sbNum');
+      const elCat  = document.getElementById('sbCat');
+      if (elRows) elRows.textContent = (data.rows || 0).toLocaleString();
+      if (elCols) elCols.textContent = cols.length;
+      
+      // Simple classification fallback
+      let numCols = [], catCols = [];
+      if (Object.keys(state.masterSchema).length > 0) {
+        const classified = classifyColumnsFromSchema(cols);
+        numCols = classified.numCols;
+        catCols = classified.catCols;
+      } else {
+        const numericHints = /id|num|count|qty|amount|price|sales|revenue|age|score|gpa|salary|total|rate|value|profit|cost|quantity|percent|ratio/;
+        const dateHints    = /date|time|year|month|day|period|created|updated/;
+        numCols = cols.filter(c => numericHints.test(c.toLowerCase()));
+        catCols = cols.filter(c => !numericHints.test(c.toLowerCase()) && !dateHints.test(c.toLowerCase()));
+      }
+      if (elNum) elNum.textContent = numCols.length;
+      if (elCat) elCat.textContent = catCols.length;
+    });
+}
+
+async function showDatasetOverview() {
+  if (!state.uploaded) return;
+
+  emptyState.style.display = 'none';
+  messagesContainer.style.display = 'none';
+  datasetOverview.style.display = 'block';
+  inputBarWrap.classList.remove('visible');
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === 'overview');
+  });
+  chatMain.scrollTo({ top: 0, behavior: 'smooth' });
+
+  const loading = document.getElementById('overviewLoading');
+  const content = document.getElementById('overviewContent');
+  const error = document.getElementById('overviewError');
+  loading.style.display = 'flex';
+  content.style.display = 'none';
+  error.style.display = 'none';
+
+  try {
+    const overview = state.overview || await fetchDatasetOverview();
+    state.overview = overview;
+    renderDatasetOverview(overview);
+    loading.style.display = 'none';
+    content.style.display = 'block';
+  } catch (err) {
+    loading.style.display = 'none';
+    error.textContent = err.message || 'Unable to generate the dataset overview.';
+    error.style.display = 'block';
   }
+}
 
-  // Target Sidebar IDs
-  const elRows = document.getElementById('sbRows');
-  const elCols = document.getElementById('sbCols');
-  const elNum  = document.getElementById('sbNum');
-  const elCat  = document.getElementById('sbCat');
+async function fetchDatasetOverview() {
+  const response = await fetch('/dataset-overview');
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Unable to generate the dataset overview.');
+  }
+  return data;
+}
 
-  if (elRows) elRows.textContent = data.rows.toLocaleString();
-  if (elCols) elCols.textContent = cols.length;
-  if (elNum)  elNum.textContent  = numCols.length;
-  if (elCat)  elCat.textContent  = catCols.length;
+function closeDatasetOverview() {
+  if (!datasetOverview) return;
+  datasetOverview.style.display = 'none';
+  messagesContainer.style.display = 'flex';
+  emptyState.style.display = messagesContainer.children.length ? 'none' : 'block';
+  inputBarWrap.classList.add('visible');
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
+  chatInput.focus();
+}
+
+function renderDatasetOverview(overview) {
+  const statCard = (label, value, icon) => `
+    <div class="overview-stat-card">
+      <i class="ti ${icon}"></i>
+      <div><span>${escHtml(String(label))}</span><strong>${escHtml(String(value))}</strong></div>
+    </div>`;
+
+  document.getElementById('overviewSummary').innerHTML = [
+    statCard('Total Records', overview.total_records.toLocaleString(), 'ti-list-numbers'),
+    statCard('Total Rows', overview.total_rows.toLocaleString(), 'ti-table-row'),
+    statCard('Total Columns', overview.total_columns, 'ti-columns'),
+    statCard('Dataset / File Size', overview.dataset_size, 'ti-database'),
+  ].join('');
+
+  document.getElementById('overviewTypes').innerHTML = [
+    statCard('Numeric Columns', overview.column_types.numeric, 'ti-numbers'),
+    statCard('Categorical Columns', overview.column_types.categorical, 'ti-tags'),
+    statCard('Date/Time Columns', overview.column_types.date, 'ti-calendar'),
+    statCard('Boolean Columns', overview.column_types.boolean, 'ti-toggle-left'),
+  ].join('');
+
+  document.getElementById('overviewSchemaBody').innerHTML = overview.schema_details.map(item => `
+    <tr>
+      <td><strong>${escHtml(item.column_name)}</strong></td>
+      <td><span class="overview-type-badge">${escHtml(item.sqlite_type)}</span></td>
+      <td>${item.sample_values.length ? item.sample_values.map(value => escHtml(value)).join(', ') : '<span class="overview-muted">No non-null samples</span>'}</td>
+    </tr>`).join('');
+
+  const detailRow = (label, value) => `
+    <div class="overview-detail-row"><span>${escHtml(label)}</span><strong>${escHtml(String(value))}</strong></div>`;
+  const quality = overview.data_quality;
+  document.getElementById('overviewQuality').innerHTML = [
+    detailRow('Total Missing Values', quality.total_missing_values.toLocaleString()),
+    detailRow('Missing Value Percentage', `${quality.missing_percentage}%`),
+    detailRow('Duplicate Record Count', quality.duplicate_records.toLocaleString()),
+    detailRow('Empty Columns', quality.empty_columns),
+    detailRow('Data Consistency', `${quality.consistency_percentage}%`),
+  ].join('');
+
+  const keys = overview.key_fields;
+  document.getElementById('overviewKeys').innerHTML = [
+    detailRow('Primary Identifier', keys.primary_id || 'Not detected'),
+    detailRow('Date Column', keys.date_column || 'Not detected'),
+    detailRow('Main Measures', keys.measure_columns.length ? keys.measure_columns.join(', ') : 'Not detected'),
+  ].join('');
+
+  const health = overview.health_score;
+  document.getElementById('overviewHealth').innerHTML = `
+    <div class="overview-health">
+      <div class="overview-health-score"><strong>${health.score}</strong><span>/100</span></div>
+      <div class="overview-health-copy">
+        <span class="overview-health-status status-${health.status.toLowerCase()}">${escHtml(health.status)}</span>
+        <div class="overview-health-track"><span style="width:${health.score}%"></span></div>
+      </div>
+    </div>`;
+}
+
+function exportDatasetOverview() {
+  const format = document.getElementById('overviewExportFormat').value;
+  window.location.href = `/dataset-overview/download/${format}`;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -192,6 +356,7 @@ function hardResetToUploadScreen() {
   state.dataset = { name: '', rows: 0, columns: [] };
   state.querying = false;
   state.lastSQL  = '';
+  state.overview = null;
   state.vizModal = { msgId: null, chart: null };
 
   messagesContainer.innerHTML = '';
@@ -280,563 +445,6 @@ sendBtn.addEventListener('click', () => {
   if (!state.querying) sendMessage(chatInput.value.trim());
 });
 
-/* ═══════════════════════════════════════════════════════════════
-   AI INSIGHTS DASHBOARD (12-section enterprise module)
-════════════════════════════════════════════════════════════════ */
-async function loadInsights() {
-  if (!state.uploaded) return;
-
-  emptyState.style.display = 'none';
-  messagesContainer.innerHTML = '';
-
-  const loadingId = 'ins-load-' + Date.now();
-  const row = document.createElement('div');
-  row.className = 'msg-row msg-ai msg-loading';
-  row.id = loadingId;
-  row.innerHTML = `
-    <div class="msg-ai-wrap">
-      <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
-      <div class="msg-ai-card">
-        <div class="loading-dots"><span></span><span></span><span></span></div>
-        <div class="loading-text">Running AI analysis across all dimensions…</div>
-      </div>
-    </div>`;
-  messagesContainer.appendChild(row);
-  scrollToBottom();
-
-  try {
-    const res = await fetch('/insights', { method: 'POST' });
-    const data = await res.json();
-    removeMsg(loadingId);
-
-    if (!res.ok || data.success === false) {
-      appendErrorMsg(data.error || 'Insights generation failed.');
-      return;
-    }
-
-    renderInsightsDashboard(data);
-    scrollToBottom();
-  } catch (e) {
-    removeMsg(loadingId);
-    appendErrorMsg('Could not reach the server for insights.');
-  }
-}
-
-/* ── Main Dashboard Renderer ── */
-function renderInsightsDashboard(data) {
-  if (!data || data.success === false) {
-    appendErrorMsg(data?.error || 'No insight data available.');
-    return;
-  }
-
-  const msgId = 'insights-dash-' + Date.now();
-  const row = document.createElement('div');
-  row.className = 'msg-row msg-ai';
-  row.id = msgId;
-  row.innerHTML = `
-    <div class="msg-ai-wrap">
-      <div class="msg-ai-avatar" aria-hidden="true">${iconBot()}</div>
-      <div class="msg-ai-card">
-        <div class="insights-dashboard" id="${msgId}-dash"></div>
-      </div>
-    </div>`;
-  messagesContainer.appendChild(row);
-
-  const dash = document.getElementById(msgId + '-dash');
-  
-  // Build all 12 sections
-  buildSection1Overview(dash, data);
-  buildSection2Findings(dash, data);
-  buildSection3Stats(dash, data);
-  buildSection4Trends(dash, data);
-  buildSection5Performers(dash, data);
-  buildSection6Outliers(dash, data);
-  buildSection7Correlations(dash, data);
-  buildSection8Quality(dash, data);
-  buildSection9Visuals(dash, data, msgId);
-  buildSection10Business(dash, data);
-  buildSection11Predictive(dash, data);
-  buildSection12Executive(dash, data);
-
-  // Render charts
-  requestAnimationFrame(() => {
-    renderInsightCharts(data, msgId);
-  });
-}
-
-/* ── Section 1: Dataset Overview ── */
-function buildSection1Overview(dash, data) {
-  const ov = data.dataset_overview || {};
-  const sec = createSection(dash, '1', '📊', 'Dataset Overview', 'Summary of your data');
-  
-  const grid = document.createElement('div');
-  grid.className = 'insights-overview-grid';
-  
-  const kpis = [
-    { label: 'Total Rows', value: (ov.total_rows || 0).toLocaleString(), desc: 'Records' },
-    { label: 'Columns', value: ov.total_columns || 0, desc: `${ov.numeric_columns || 0} num · ${ov.categorical_columns || 0} cat` },
-    { label: 'Type', value: ov.dataset_type || 'Generic', desc: 'Detected domain' },
-    { label: 'Missing', value: (ov.total_missing_values || 0).toLocaleString(), desc: 'Empty cells' },
-    { label: 'Duplicates', value: (ov.total_duplicate_records || 0).toLocaleString(), desc: 'Repeated rows' },
-    { label: 'Memory', value: (ov.memory_usage_mb || 0) + ' MB', desc: 'RAM usage' },
-  ];
-  
-  kpis.forEach(k => {
-    const card = document.createElement('div');
-    card.className = 'insights-kpi-card';
-    card.innerHTML = `
-      <div class="insights-kpi-label">${escHtml(k.label)}</div>
-      <div class="insights-kpi-value">${escHtml(k.value)}</div>
-      <div class="insights-kpi-desc">${escHtml(k.desc)}</div>`;
-    grid.appendChild(card);
-  });
-  sec.appendChild(grid);
-  
-  if (ov.description) {
-    const desc = document.createElement('div');
-    desc.className = 'insights-desc-card';
-    desc.innerHTML = parseMarkdown(ov.description || '');
-    sec.appendChild(desc);
-  }
-}
-
-/* ── Section 2: Key Findings ── */
-function buildSection2Findings(dash, data) {
-  const findings = data.key_findings || [];
-  if (!findings.length) return;
-  
-  const sec = createSection(dash, '2', '🔍', 'Key Findings', 'Most important patterns discovered');
-  const grid = document.createElement('div');
-  grid.className = 'insights-findings-grid';
-  
-  findings.forEach(f => {
-    const type = f.type || 'discovery';
-    const card = document.createElement('div');
-    card.className = 'insights-finding-card';
-    card.innerHTML = `
-      <div class="insights-finding-type finding-type-${type}">${escHtml(type)}</div>
-      <div class="insights-finding-title">${escHtml(f.title || '')}</div>
-      <div class="insights-finding-desc">${escHtml(f.explanation || '')}</div>
-      <div class="insights-confidence-badge confidence-${(f.confidence || 'medium').toLowerCase()}">${escHtml(f.confidence || 'MEDIUM')}</div>`;
-    grid.appendChild(card);
-  });
-  sec.appendChild(grid);
-}
-
-/* ── Section 3: Statistical Analysis ── */
-function buildSection3Stats(dash, data) {
-  const stats = data.statistical_analysis || [];
-  if (!stats.length) return;
-  
-  const sec = createSection(dash, '3', '📈', 'Statistical Analysis', 'Mean, median, distribution & variability');
-  
-  const wrap = document.createElement('div');
-  wrap.className = 'insights-stats-wrap';
-  let html = `<table class="insights-stats-table"><thead><tr>
-    <th>Column</th><th>Count</th><th>Mean</th><th>Median</th><th>Mode</th><th>Std</th><th>Min</th><th>Max</th><th>Q1</th><th>Q3</th><th>Skew</th><th>Variability</th>
-  </tr></thead><tbody>`;
-  
-  stats.forEach(s => {
-    html += `<tr>
-      <td><strong>${escHtml(s.column)}</strong></td>
-      <td>${s.count}</td>
-      <td>${s.mean !== null && s.mean !== undefined ? s.mean : '—'}</td>
-      <td>${s.median !== null && s.median !== undefined ? s.median : '—'}</td>
-      <td>${s.mode !== null && s.mode !== undefined ? s.mode : '—'}</td>
-      <td>${s.std !== null && s.std !== undefined ? s.std : '—'}</td>
-      <td>${s.min !== null && s.min !== undefined ? s.min : '—'}</td>
-      <td>${s.max !== null && s.max !== undefined ? s.max : '—'}</td>
-      <td>${s.q1 !== null && s.q1 !== undefined ? s.q1 : '—'}</td>
-      <td>${s.q3 !== null && s.q3 !== undefined ? s.q3 : '—'}</td>
-      <td>${escHtml(s.skewness || '—')}</td>
-      <td>${escHtml(s.variability || '—')}</td>
-    </tr>`;
-  });
-  
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
-  sec.appendChild(wrap);
-  
-  // Notable stats
-  const notable = data.notable_statistics || [];
-  if (notable.length) {
-    const list = document.createElement('div');
-    list.className = 'insights-notable-list';
-    notable.forEach(n => {
-      const item = document.createElement('div');
-      item.className = 'insights-notable-item';
-      item.textContent = n;
-      list.appendChild(item);
-    });
-    sec.appendChild(list);
-  }
-}
-
-/* ── Section 4: Trends & Patterns ── */
-function buildSection4Trends(dash, data) {
-  const trends = data.trends || [];
-  if (!trends.length) {
-    // Skip gracefully - no date columns
-    return;
-  }
-  
-  const sec = createSection(dash, '4', '📉', 'Trends & Patterns', 'Time-based patterns detected');
-  
-  trends.forEach(t => {
-    const card = document.createElement('div');
-    card.className = 'insights-trend-card';
-    card.innerHTML = `
-      <div class="insights-trend-header">
-        <div class="insights-trend-title">${escHtml(t.metric || '')} over ${escHtml(t.date_column || 'time')}</div>
-        <div class="insights-trend-direction trend-${t.direction || 'upward'}">${escHtml(t.direction || '')} (${escHtml(t.strength || '')})</div>
-      </div>
-      <div class="insights-trend-detail">
-        Slope: ${t.slope || 0} · ${t.periods || 0} time periods analyzed<br>
-        <strong>Direction:</strong> ${escHtml(t.direction || 'stable')} · <strong>Strength:</strong> ${escHtml(t.strength || 'moderate')}
-      </div>`;
-    
-    // Add monthly data preview
-    if (t.monthly_data && t.monthly_data.length) {
-      const dataList = document.createElement('div');
-      dataList.style.marginTop = '8px';
-      dataList.style.fontSize = '11px';
-      dataList.style.color = 'var(--text-faint)';
-      dataList.innerHTML = '<strong>Periods:</strong> ' + t.monthly_data.slice(-5).map(m => `${escHtml(m.period)} (${m.mean})`).join(' · ');
-      card.appendChild(dataList);
-    }
-    
-    sec.appendChild(card);
-  });
-}
-
-/* ── Section 5: Top Performers ── */
-function buildSection5Performers(dash, data) {
-  const performers = data.top_performers || [];
-  if (!performers.length) return;
-  
-  const sec = createSection(dash, '5', '🏆', 'Top Performers', 'Best entities by key metric');
-  
-  performers.forEach(p => {
-    const card = document.createElement('div');
-    card.className = 'insights-performer-card';
-    card.innerHTML = `
-      <div class="insights-performer-header">
-        <div class="insights-performer-title">By ${escHtml(p.category_column || 'category')}</div>
-        <div class="insights-performer-sub">Metric: ${escHtml(p.metric || '')} · Total: ${p.total !== null && p.total !== undefined ? p.total.toLocaleString() : 'N/A'}</div>
-      </div>
-      <div class="insights-performer-list">`;
-    
-    (p.top_items || []).slice(0, 5).forEach((item, i) => {
-      const rank = i + 1;
-      card.innerHTML += `
-        <div class="insights-performer-item">
-          <div class="performer-rank">${rank}</div>
-          <div class="performer-name">${escHtml(item.name || '')}</div>
-          <div class="performer-value">${item.mean !== null && item.mean !== undefined ? item.mean.toFixed(2) : '—'}</div>
-          <div class="performer-pct">${item.contribution_pct !== null && item.contribution_pct !== undefined ? item.contribution_pct.toFixed(1) + '%' : ''}</div>
-        </div>`;
-    });
-    
-    card.innerHTML += '</div>';
-    sec.appendChild(card);
-  });
-}
-
-/* ── Section 6: Outliers & Anomalies ── */
-function buildSection6Outliers(dash, data) {
-  const outliers = data.outliers_anomalies || [];
-  if (!outliers.length) return;
-  
-  const sec = createSection(dash, '6', '⚠️', 'Outliers & Anomalies', 'Statistical outliers detected via IQR');
-  
-  outliers.forEach(o => {
-    const sev = (o.severity || 'low').toLowerCase();
-    const card = document.createElement('div');
-    card.className = 'insights-outlier-card';
-    card.innerHTML = `
-      <div class="insights-outlier-header">
-        <div class="insights-outlier-title">${escHtml(o.column || '')}</div>
-        <div class="insights-outlier-severity severity-${sev}">${escHtml(o.severity || 'LOW')}</div>
-      </div>
-      <div class="insights-outlier-detail">
-        ${o.total_outliers || 0} outliers (${o.outlier_pct || 0}% of values)
-      </div>
-      <div class="insights-outlier-stats">
-        <span class="insights-outlier-stat">▼ Low: ${o.low_outliers || 0}</span>
-        <span class="insights-outlier-stat">▲ High: ${o.high_outliers || 0}</span>
-        <span class="insights-outlier-stat">Q1: ${o.q1 || '—'}</span>
-        <span class="insights-outlier-stat">Q3: ${o.q3 || '—'}</span>
-        <span class="insights-outlier-stat">IQR: ${o.iqr || '—'}</span>
-      </div>`;
-    sec.appendChild(card);
-  });
-}
-
-/* ── Section 7: Correlation Analysis ── */
-function buildSection7Correlations(dash, data) {
-  const corr = data.correlation_analysis || {};
-  const pos = corr.strong_positive || [];
-  const neg = corr.strong_negative || [];
-  
-  if (!pos.length && !neg.length) return;
-  
-  const sec = createSection(dash, '7', '🔗', 'Correlation Analysis', 'Strong relationships between variables');
-  const grid = document.createElement('div');
-  grid.className = 'insights-corr-grid';
-  
-  if (pos.length) {
-    pos.slice(0, 5).forEach(p => {
-      const card = document.createElement('div');
-      card.className = 'insights-corr-card';
-      card.innerHTML = `
-        <div class="insights-corr-type corr-positive">Strong Positive</div>
-        <div class="insights-corr-pair">${escHtml(p.var1 || '')} ↔ ${escHtml(p.var2 || '')}</div>
-        <div class="insights-corr-value">r = ${p.r !== null && p.r !== undefined ? p.r.toFixed(3) : '—'}</div>`;
-      grid.appendChild(card);
-    });
-  }
-  
-  if (neg.length) {
-    neg.slice(0, 5).forEach(n => {
-      const card = document.createElement('div');
-      card.className = 'insights-corr-card';
-      card.innerHTML = `
-        <div class="insights-corr-type corr-negative">Strong Negative</div>
-        <div class="insights-corr-pair">${escHtml(n.var1 || '')} ↔ ${escHtml(n.var2 || '')}</div>
-        <div class="insights-corr-value">r = ${n.r !== null && n.r !== undefined ? n.r.toFixed(3) : '—'}</div>`;
-      grid.appendChild(card);
-    });
-  }
-  
-  sec.appendChild(grid);
-}
-
-/* ── Section 8: Data Quality Report ── */
-function buildSection8Quality(dash, data) {
-  const q = data.data_quality_report || {};
-  const missing = q.missing_values || {};
-  const dupes = q.duplicates || {};
-  
-  const sec = createSection(dash, '8', '🛡️', 'Data Quality Report', 'Completeness and cleanliness');
-  const grid = document.createElement('div');
-  grid.className = 'insights-quality-grid';
-  
-  // Missing values card
-  const missingCard = document.createElement('div');
-  missingCard.className = 'insights-quality-card';
-  missingCard.innerHTML = `
-    <div class="insights-quality-header">
-      <div class="insights-quality-label">Missing Values</div>
-      <div class="insights-quality-severity severity-${(missing.columns_with_missing > 0 ? 'medium' : 'low')}">${missing.columns_with_missing > 0 ? 'Has Missing' : 'Clean'}</div>
-    </div>
-    <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">
-      Total missing cells: <strong>${(missing.total_missing_cells || 0).toLocaleString()}</strong><br>
-      Columns affected: <strong>${missing.columns_with_missing || 0}</strong> / ${q.total_columns || 0}
-    </div>`;
-  grid.appendChild(missingCard);
-  
-  // Missing column details
-  if (missing.column_details && missing.column_details.length) {
-    missing.column_details.slice(0, 5).forEach(d => {
-      const sev = (d.severity || 'low').toLowerCase();
-      const card = document.createElement('div');
-      card.className = 'insights-quality-card';
-      card.innerHTML = `
-        <div class="insights-quality-header">
-          <div class="insights-quality-label">${escHtml(d.column || '')}</div>
-          <div class="insights-quality-severity severity-${sev}">${escHtml(d.severity || 'LOW')}</div>
-        </div>
-        <div style="font-size:12px;color:var(--text-muted);">
-          ${d.total_missing || 0} missing · ${d.missing_pct || 0}% of values
-          ${d.nulls > 0 ? ` · ${d.nulls} nulls` : ''}
-          ${d.blanks > 0 ? ` · ${d.blanks} blanks` : ''}
-        </div>`;
-      grid.appendChild(card);
-    });
-  }
-  
-  // Duplicates card
-  if (dupes.total_duplicate_rows > 0) {
-    const dupeCard = document.createElement('div');
-    dupeCard.className = 'insights-quality-card';
-    dupeCard.innerHTML = `
-      <div class="insights-quality-header">
-        <div class="insights-quality-label">Duplicate Records</div>
-        <div class="insights-quality-severity severity-${(dupes.severity || 'low').toLowerCase()}">${escHtml(dupes.severity || 'LOW')}</div>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);">
-        ${dupes.total_duplicate_rows || 0} duplicate rows (${dupes.duplicate_pct || 0}% of data)
-      </div>`;
-    grid.appendChild(dupeCard);
-  }
-  
-  sec.appendChild(grid);
-}
-
-/* ── Section 9: Visual Insights ── */
-function buildSection9Visuals(dash, data, msgId) {
-  const visuals = data.visual_insights || [];
-  if (!visuals.length) return;
-  
-  const sec = createSection(dash, '9', '🎨', 'Visual Insights', 'Auto-generated charts from your data');
-  const grid = document.createElement('div');
-  grid.className = 'insights-viz-grid';
-  
-  visuals.forEach((v, i) => {
-    const vizId = `${msgId}-viz-${i}`;
-    const card = document.createElement('div');
-    card.className = 'insights-viz-card';
-    card.innerHTML = `
-      <div class="insights-viz-title">${escHtml(v.title || 'Chart')}</div>
-      <div class="insights-viz-canvas-wrap">
-        <canvas id="${vizId}"></canvas>
-      </div>
-      <div class="insights-viz-explanation">${escHtml(v.title || '')} — ${escHtml(v.chart_type || '')} visualization</div>`;
-    grid.appendChild(card);
-    
-    // Store canvas info for later rendering
-    card.dataset.vizId = vizId;
-    card.dataset.chartType = v.chart_type || 'bar';
-    card.dataset.chartData = JSON.stringify(v.chart_data || {});
-  });
-  
-  sec.appendChild(grid);
-}
-
-/* ── Section 10: Business Insights ── */
-function buildSection10Business(dash, data) {
-  const biz = data.business_insights || [];
-  if (!biz.length) return;
-  
-  const sec = createSection(dash, '10', '💡', 'Business Insights', 'Actionable data-driven recommendations');
-  const grid = document.createElement('div');
-  grid.className = 'insights-biz-grid';
-  
-  biz.forEach(b => {
-    const pri = (b.priority || 'medium').toLowerCase();
-    const card = document.createElement('div');
-    card.className = 'insights-biz-card';
-    card.innerHTML = `
-      <div class="insights-biz-priority priority-${pri}">${escHtml(b.priority || 'MEDIUM')} Priority</div>
-      <div class="insights-biz-title">${escHtml(b.title || '')}</div>
-      <div class="insights-biz-desc">${escHtml(b.description || '')}</div>
-      ${b.action ? `<div class="insights-biz-action">${escHtml(b.action)}</div>` : ''}`;
-    grid.appendChild(card);
-  });
-  
-  sec.appendChild(grid);
-}
-
-/* ── Section 11: Predictive Opportunities ── */
-function buildSection11Predictive(dash, data) {
-  const preds = data.predictive_opportunities || [];
-  if (!preds.length) return;
-  
-  const sec = createSection(dash, '11', '🤖', 'Predictive Opportunities', 'Machine Learning potential');
-  const grid = document.createElement('div');
-  grid.className = 'insights-pred-grid';
-  
-  preds.forEach(p => {
-    const fea = (p.feasibility || 'medium').toLowerCase();
-    const feaColor = fea === 'high' ? '#86EFAC' : fea === 'medium' ? '#FCD34D' : '#FCA5A5';
-    const card = document.createElement('div');
-    card.className = 'insights-pred-card';
-    card.innerHTML = `
-      <div class="insights-pred-title">${escHtml(p.title || '')}</div>
-      <div class="insights-pred-desc">${escHtml(p.description || '')}</div>
-      ${p.target ? `<div style="font-size:11px;color:var(--text-faint);margin-top:4px;">Target: <strong>${escHtml(p.target)}</strong></div>` : ''}
-      <div class="insights-pred-feasibility" style="color:${feaColor}">Feasibility: ${escHtml(p.feasibility || 'MEDIUM')}</div>`;
-    grid.appendChild(card);
-  });
-  
-  sec.appendChild(grid);
-}
-
-/* ── Section 12: Executive Summary ── */
-function buildSection12Executive(dash, data) {
-  const exec = data.executive_summary || [];
-  if (!exec.length) return;
-  
-  const sec = createSection(dash, '12', '📋', 'AI Executive Summary', 'Key takeaways and recommendations');
-  const list = document.createElement('div');
-  list.className = 'insights-exec-list';
-  
-  exec.forEach((point, i) => {
-    const item = document.createElement('div');
-    item.className = 'insights-exec-item';
-    item.innerHTML = `
-      <div class="insights-exec-bullet">${i + 1}</div>
-      <div>${parseMarkdown(point || '')}</div>`;
-    list.appendChild(item);
-  });
-  
-  sec.appendChild(list);
-}
-
-/* ── Helper: Create a section container ── */
-function createSection(parent, num, icon, title, subtitle) {
-  const section = document.createElement('div');
-  section.className = 'insights-section';
-  section.innerHTML = `
-    <div class="insights-section-header">
-      <div class="insights-section-icon">${icon}</div>
-      <div>
-        <div class="insights-section-title">${title}</div>
-        <div class="insights-section-subtitle">${subtitle}</div>
-      </div>
-    </div>`;
-  parent.appendChild(section);
-  return section;
-}
-
-/* ── Render Insight Charts (after DOM ready) ── */
-function renderInsightCharts(data, msgId) {
-  const visuals = data.visual_insights || [];
-  visuals.forEach((v, i) => {
-    const vizId = `${msgId}-viz-${i}`;
-    const canvas = document.getElementById(vizId);
-    if (!canvas) return;
-    
-    const chartData = v.chart_data || {};
-    const chartType = v.chart_type || 'bar';
-    
-    let spec = null;
-    if (chartType === 'bar' || chartType === 'histogram') {
-      const labels = chartData.labels || [];
-      const series = chartData.series?.[0]?.data || [];
-      if (labels.length && series.length) {
-        spec = { plotType: 'bar', title: v.title || '', xLabel: v.x_label || '', yLabel: v.y_label || '', labels, series: [{ label: 'Value', data: series, labels }] };
-      }
-    } else if (chartType === 'line') {
-      const labels = chartData.labels || [];
-      const series = chartData.series?.[0]?.data || [];
-      if (labels.length && series.length) {
-        spec = { plotType: 'line', title: v.title || '', xLabel: v.x_label || '', yLabel: v.y_label || '', labels, series: [{ label: 'Value', data: series, labels }] };
-      }
-    } else if (chartType === 'pie') {
-      const labels = chartData.labels || [];
-      const series = chartData.series?.[0]?.data || [];
-      if (labels.length && series.length) {
-        spec = { plotType: 'pie', title: v.title || '', labels, series: [{ label: 'Distribution', data: series, labels }] };
-      }
-    } else if (chartType === 'heatmap') {
-      // Heatmaps are data tables, skip Chart.js rendering
-      return;
-    } else if (chartType === 'box') {
-      return;
-    }
-    
-    if (spec) {
-      try {
-        _renderChart(vizId, spec);
-      } catch (e) {
-        // Silently skip chart render errors
-      }
-    }
-  });
-}
-
-
 // Theme toggle
 const themeToggle = document.getElementById('themeToggle');
 const themeToggleUpload = document.getElementById('themeToggleUpload');
@@ -864,6 +472,7 @@ async function sendMessage(text) {
   if (!text || state.querying || !state.uploaded) return;
 
   // Hide empty state and overview on first question
+  closeDatasetOverview();
   emptyState.style.display = 'none';
 
   appendUserMsg(text);

@@ -18,12 +18,10 @@ from backend.services.visualization_profile_service import VisualizationProfileS
 from backend.services.chart_recommendation_service import ChartRecommendationService
 from backend.services.visualization_preparation_service import VisualizationPreparationService
 from backend.services.chart_recommender import ChartRecommender
-from backend.services.insights.insights_engine import generate_insights as generate_insights_engine
-
 
 
 from backend.utils.db_utils import get_schema, load_dataframe
-from backend.utils.file_utils import read_csv
+from backend.utils.file_utils import read_uploaded_file
 from backend.utils.active_dataset_store import (
     load_dataframe_into_active_db, get_active_schema, active_dataset_exists, get_active_connection,
     get_master_schema, get_master_schema_formatted
@@ -39,6 +37,7 @@ from backend.services.cleaning_service import clean as clean_service
 from backend.services.transformation_service import transform as transform_service
 from backend.services.audit_service import create_snapshot_for_undo, undo_last_operation
 from backend.services.relevance_validator import RelevanceValidator, _normalize
+from backend.services.insights.insights_engine import compute_dataset_overview
 
 logger = logging.getLogger("routes")
 _relevance_validator = RelevanceValidator()
@@ -263,13 +262,6 @@ def generate_data_quality_report() -> str:
         conn.close()
 
 
-# NOTE: legacy LLM-based insights generator removed.
-# The new enterprise insight engine lives in:
-#   backend/services/insights/insights_engine.py
-
-
-
-
 def _parse_user_chart_type(question: str) -> str | None:
     """Extract explicitly requested chart type from the question string."""
     q = question.lower()
@@ -360,32 +352,6 @@ def execute_confirmed_operation(op_type: str, question: str) -> tuple:
         return jsonify({"error": f"Operation failed and was reverted: {str(e)}"}), 400
 
 
-@api.route("/insights", methods=["POST"])
-def insights():
-    """Enterprise dataset-wide insights (structured JSON only)."""
-    if not active_dataset_exists():
-        return jsonify({"error": "No active dataset. Please upload a CSV file first."}), 400
-
-    try:
-        payload = generate_insights_engine()
-        # Always return a JSON object with a stable shape
-        if isinstance(payload, dict):
-            if "success" not in payload:
-                payload["success"] = True
-        return jsonify(payload)
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        logger.exception("Insights generation failed: %s", str(e))
-        return jsonify({
-            "success": False,
-            "error": f"Insights generation failed: {str(e)}",
-            "debug": tb,
-        }), 500
-
-
-
-
 @api.route("/schema", methods=["GET"])
 def get_schema_endpoint():
     """Return the master schema dict (NUM/TEXT/DATE) for the active dataset."""
@@ -402,11 +368,91 @@ def get_schema_endpoint():
     })
 
 
+@api.route("/dataset-overview", methods=["GET"])
+def dataset_overview_endpoint():
+    """Return the enhanced Dataset Overview for the active dataset."""
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset."}), 400
+
+    overview = compute_dataset_overview()
+    if not overview.get("success"):
+        return jsonify({"error": overview.get("error", "Failed to compute overview.")}), 500
+
+    return jsonify(overview)
+
+
+def _overview_export_dataframe(overview: dict) -> pd.DataFrame:
+    """Flatten overview sections into the table shape used by existing exporters."""
+    rows = [
+        ("Dataset Summary", "Total Records", overview["total_records"]),
+        ("Dataset Summary", "Total Rows", overview["total_rows"]),
+        ("Dataset Summary", "Total Columns", overview["total_columns"]),
+        ("Dataset Summary", "Dataset Size", overview["dataset_size"]),
+        ("Column Distribution", "Numeric Columns", overview["column_types"]["numeric"]),
+        ("Column Distribution", "Categorical Columns", overview["column_types"]["categorical"]),
+        ("Column Distribution", "Date/Time Columns", overview["column_types"]["date"]),
+        ("Column Distribution", "Boolean Columns", overview["column_types"]["boolean"]),
+        ("Data Quality", "Total Missing Values", overview["data_quality"]["total_missing_values"]),
+        ("Data Quality", "Missing Value Percentage", f'{overview["data_quality"]["missing_percentage"]}%'),
+        ("Data Quality", "Duplicate Record Count", overview["data_quality"]["duplicate_records"]),
+        ("Data Quality", "Empty Columns", overview["data_quality"]["empty_columns"]),
+        ("Data Quality", "Data Consistency", f'{overview["data_quality"]["consistency_percentage"]}%'),
+        ("Key Columns", "Primary Identifier", overview["key_fields"]["primary_id"] or "Not detected"),
+        ("Key Columns", "Date Column", overview["key_fields"]["date_column"] or "Not detected"),
+        ("Key Columns", "Main Measures", ", ".join(overview["key_fields"]["measure_columns"]) or "Not detected"),
+        ("Dataset Health", "Score", f'{overview["health_score"]["score"]}/100'),
+        ("Dataset Health", "Classification", overview["health_score"]["status"]),
+    ]
+    rows.extend(
+        (
+            "Schema Summary",
+            item["column_name"],
+            f'{item["sqlite_type"]} | Samples: {", ".join(item["sample_values"]) or "None"}',
+        )
+        for item in overview["schema_details"]
+    )
+    return pd.DataFrame(rows, columns=["Section", "Metric / Column", "Value"])
+
+
+@api.route("/dataset-overview/download/<fmt>", methods=["GET"])
+def download_dataset_overview(fmt: str):
+    """Export Dataset Overview through the existing export service."""
+    fmt = fmt.lower()
+    if fmt not in _FORMATS:
+        return jsonify({"error": f"Unsupported format '{fmt}'."}), 400
+
+    overview = compute_dataset_overview()
+    if not overview.get("success"):
+        return jsonify({"error": overview.get("error", "Failed to compute overview.")}), 400
+
+    try:
+        report = _overview_export_dataframe(overview)
+        if fmt == "xlsx":
+            buffer = to_excel(report)
+        elif fmt in ("png", "jpg"):
+            buffer = to_image(report, fmt=fmt)
+        elif fmt == "pdf":
+            buffer = to_pdf(report, title="Dataset Overview")
+        else:
+            buffer = to_word(report, title="Dataset Overview")
+
+        _, mimetype = _FORMATS[fmt]
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f"dataset_overview.{fmt}",
+            mimetype=mimetype,
+        )
+    except Exception as exc:
+        logger.exception("Dataset overview export failed: %s", exc)
+        return jsonify({"error": f"Export failed: {exc}"}), 500
+
+
 @api.route("/upload", methods=["POST"])
 def upload():
     """Validate and store an uploaded CSV file."""
 
-    df, error = read_csv(request.files.get("file"))
+    df, error = read_uploaded_file(request.files.get("file"))
 
     if error:
         logger.warning("Upload rejected: %s", error)
@@ -486,10 +532,6 @@ def query():
                 "rows": preview["rows"],
                 "total": preview["total"]
             })
-
-        # NOTE: AI Insights are now a dedicated endpoint.
-        # Do not generate structured insights inside the chat flow.
-
 
         # ── 3. Classify intent via LLM ─────────────────────────────────
         classification = classify_intent(question, schema)

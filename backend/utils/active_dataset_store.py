@@ -32,7 +32,6 @@ from typing import Dict, Optional
 from flask import session
 
 from backend.config.settings import DATA_DIR, SESSIONS_DIR
-from backend.utils.file_utils import read_csv
 
 TABLE_NAME = "dataset"
 

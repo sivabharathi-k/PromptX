@@ -110,7 +110,7 @@ def to_image(df: pd.DataFrame, fmt: str = "png") -> io.BytesIO:
 
 # ── PDF ────────────────────────────────────────────────────────
 
-def to_pdf(df: pd.DataFrame) -> io.BytesIO:
+def to_pdf(df: pd.DataFrame, title: str = "Query Results") -> io.BytesIO:
     """Export DataFrame as a formatted PDF table with content-aware column widths."""
     buffer    = io.BytesIO()
     page_size = landscape(A4) if len(df.columns) > 6 else A4
@@ -172,7 +172,7 @@ def to_pdf(df: pd.DataFrame) -> io.BytesIO:
         buffer, pagesize=page_size,
         leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30,
     )
-    doc.build([Paragraph("Query Results", title_style), Spacer(1, 10), tbl])
+    doc.build([Paragraph(title, title_style), Spacer(1, 10), tbl])
     buffer.seek(0)
     return buffer
 
@@ -197,7 +197,7 @@ def _set_col_width(cell, twips: int) -> None:
     tc_pr.append(tcW)
 
 
-def to_word(df: pd.DataFrame) -> io.BytesIO:
+def to_word(df: pd.DataFrame, title: str = "Query Results") -> io.BytesIO:
     """Export DataFrame as a formatted Word document with fitted column widths."""
     doc = Document()
 
@@ -208,7 +208,7 @@ def to_word(df: pd.DataFrame) -> io.BytesIO:
         section.top_margin    = Twips(720)
         section.bottom_margin = Twips(720)
 
-    heading = doc.add_heading("Query Results", level=1)
+    heading = doc.add_heading(title, level=1)
     heading.runs[0].font.color.rgb = RGBColor(0x1E, 0x29, 0x3B)
 
     char_widths = _col_char_widths(df)
