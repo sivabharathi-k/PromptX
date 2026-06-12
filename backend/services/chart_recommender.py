@@ -6,7 +6,7 @@ Pure rule-based engine that analyses a DataFrame profile and produces:
   - x_axis / y_axis    : exact column names
   - reason             : human-readable explanation
   - all_types          : ordered list of applicable chart types for user override
-  - insights           : 3-5 smart observations from the data
+  - insights           : 3-8 smart observations from the data
   - spec_override      : optional pre-aggregation hint for the prep service
 
 No extra LLM call is needed — the VisualizationProfileService already extracts
@@ -42,6 +42,29 @@ def _col_kind(col_name: str, profile_cols: dict) -> str:
     if _is_date_col(col_name, kind):
         return "date"
     return kind
+
+
+def _fmt(val: Any) -> str:
+    try:
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return str(val)
+        if abs(f) >= 1_000_000:
+            return f"{f / 1_000_000:.2f}M"
+        if abs(f) >= 1_000:
+            return f"{f / 1_000:.1f}K"
+        if f == int(f):
+            return str(int(f))
+        return f"{f:.2f}"
+    except Exception:
+        return str(val)
+
+
+def _generate_percentage_str(part: float, total: float) -> str:
+    if total and total != 0:
+        pct = round(100 * part / total, 1)
+        return f" ({pct}%)"
+    return ""
 
 
 # ── Main recommender ──────────────────────────────────────────────────────────
@@ -109,7 +132,9 @@ class ChartRecommender:
             all_types = [chart] + [t for t in all_types if t != chart]
 
         # ── Generate data insights ────────────────────────────────────────────
-        insights = self._generate_insights(df, cols, x, y, numeric_cols, categorical_cols, nrows)
+        insights = self._generate_insights(
+            df, cols, x, y, numeric_cols, categorical_cols, date_cols, nrows
+        )
 
         return {
             "recommended_chart": chart,
@@ -161,7 +186,7 @@ class ChartRecommender:
             y = numeric_cols[0]
             n_unique = cols.get(x, {}).get("unique_count", 999)
 
-            if n_unique <= self.MAX_PIE_CATS and "pie" in q or "proportion" in q or "share" in q:
+            if n_unique <= self.MAX_PIE_CATS and ("pie" in q or "proportion" in q or "share" in q):
                 reason = (
                     f"**{x}** has only {n_unique} categories — "
                     "a Pie chart shows part-to-whole proportions clearly."
@@ -252,12 +277,16 @@ class ChartRecommender:
         y_col: str | None,
         numeric_cols: list,
         categorical_cols: list,
+        date_cols: list,
         nrows: int,
     ) -> list[str]:
         insights: list[str] = []
 
         try:
-            # ── Insight 1: Top category ───────────────────────────────────────
+            # ── Insight 1: Chart Summary ─────────────────────────────────────
+            insights.append(f"📊 **Chart Summary:** Analyzing {nrows:,} data points.")
+
+            # ── Insight 2: Top / Highest category ─────────────────────────────
             if x_col and y_col and x_col in df.columns and y_col in df.columns:
                 try:
                     agg = (
@@ -265,42 +294,148 @@ class ChartRecommender:
                         .sum()
                         .sort_values(ascending=False)
                     )
-                    top_label = str(agg.index[0])
-                    top_val   = agg.iloc[0]
-                    total_val = agg.sum()
+                    if not agg.empty:
+                        top_label = str(agg.index[0])
+                        top_val = float(agg.iloc[0])
+                        total_val = float(agg.sum())
 
-                    if total_val and total_val != 0:
-                        pct = round(100 * top_val / total_val, 1)
+                        pct_str = _generate_percentage_str(top_val, total_val)
                         insights.append(
-                            f"🏆 **Top {x_col}:** {top_label} "
-                            f"({_fmt(top_val)}, {pct}% of total)"
+                            f"🏆 **Highest {x_col}:** {top_label} ({_fmt(top_val)}{pct_str})"
                         )
-                    else:
-                        insights.append(f"🏆 **Top {x_col}:** {top_label} ({_fmt(top_val)})")
 
-                    # Top 3 concentration
-                    if len(agg) >= 3 and total_val:
-                        top3_pct = round(100 * agg.iloc[:3].sum() / total_val, 1)
+                        # Lowest
+                        bottom_label = str(agg.index[-1])
+                        bottom_val = float(agg.iloc[-1])
                         insights.append(
-                            f"📊 Top 3 {x_col}s contribute **{top3_pct}%** of total {y_col}."
+                            f"📉 **Lowest {x_col}:** {bottom_label} ({_fmt(bottom_val)})"
                         )
+
+                        # Average across categories
+                        avg_val = float(agg.mean())
+                        insights.append(
+                            f"📈 **Average {y_col}:** {_fmt(avg_val)} across {len(agg)} categories"
+                        )
+
+                        # Total value
+                        insights.append(
+                            f"📋 **Total {y_col}:** {_fmt(total_val)}"
+                        )
+
+                        # Top 3 concentration
+                        if len(agg) >= 3 and total_val:
+                            top3_val = float(agg.iloc[:3].sum())
+                            top3_pct = round(100 * top3_val / total_val, 1)
+                            other_pct = round(100 - top3_pct, 1)
+                            insights.append(
+                                f"🔍 **Distribution:** Top 3 {x_col}s contribute **{top3_pct}%** "
+                                f"of total {y_col} (others: {other_pct}%)"
+                            )
+
+                        # Outlier detection: check if any single category dominates
+                        if total_val and len(agg) >= 5:
+                            top_pct = round(100 * top_val / total_val, 1)
+                            if top_pct > 50:
+                                insights.append(
+                                    f"⚠ **Outlier:** '{top_label}' alone accounts for {top_pct}% "
+                                    f"of total {y_col} — dominant category detected."
+                                )
+                            elif top_pct < 2 and len(agg) > 10:
+                                insights.append(
+                                    f"💡 **Key Finding:** {y_col} is evenly distributed "
+                                    f"across {len(agg)} categories (no single dominant one)."
+                                )
                 except Exception:
                     pass
 
-            # ── Insight 2: Highest / Lowest numeric ───────────────────────────
+            # ── Insight 3: Numeric range ──────────────────────────────────────
             if y_col and y_col in df.columns:
                 try:
                     s = pd.to_numeric(df[y_col], errors="coerce").dropna()
                     if not s.empty:
                         insights.append(
-                            f"📈 **{y_col}** ranges from **{_fmt(s.min())}** "
-                            f"to **{_fmt(s.max())}** "
-                            f"(avg: {_fmt(s.mean())})"
+                            f"📈 **{y_col} range:** {_fmt(s.min())} to {_fmt(s.max())} "
+                            f"(avg: {_fmt(s.mean())}, median: {_fmt(s.median())})"
                         )
                 except Exception:
                     pass
 
-            # ── Insight 3: Missing data ────────────────────────────────────────
+            # ── Insight 4: Trend detection for line/area ──────────────────────
+            if x_col and y_col and x_col in df.columns and y_col in df.columns:
+                try:
+                    # Check if x_col looks like a date
+                    if date_cols and x_col in date_cols:
+                        tmp = df[[x_col, y_col]].copy()
+                        tmp[y_col] = pd.to_numeric(tmp[y_col], errors="coerce")
+                        tmp = tmp.dropna()
+                        if len(tmp) >= 5:
+                            first_half = tmp[y_col].iloc[:len(tmp)//2].mean()
+                            second_half = tmp[y_col].iloc[len(tmp)//2:].mean()
+                            if second_half > first_half * 1.1:
+                                change_pct = round(100 * (second_half - first_half) / max(first_half, 0.001), 1)
+                                insights.append(
+                                    f"📈 **Trend:** Upward trend detected — "
+                                    f"values increased by ~{change_pct}% over the period"
+                                )
+                            elif first_half > second_half * 1.1:
+                                change_pct = round(100 * (first_half - second_half) / max(first_half, 0.001), 1)
+                                insights.append(
+                                    f"📉 **Trend:** Downward trend detected — "
+                                    f"values decreased by ~{change_pct}% over the period"
+                                )
+                            else:
+                                insights.append(
+                                    f"➡️ **Trend:** Relatively stable over time "
+                                    f"(within 10% of mean)"
+                                )
+                except Exception:
+                    pass
+
+            # ── Insight 5: Correlation for scatter ────────────────────────────
+            if x_col and y_col and x_col in df.columns and y_col in df.columns:
+                try:
+                    tmp = df[[x_col, y_col]].dropna()
+                    tmp[x_col] = pd.to_numeric(tmp[x_col], errors="coerce")
+                    tmp[y_col] = pd.to_numeric(tmp[y_col], errors="coerce")
+                    tmp = tmp.dropna()
+                    if len(tmp) >= 5:
+                        corr = tmp[x_col].corr(tmp[y_col])
+                        direction = "positive" if corr > 0 else "negative"
+                        strength = "strong" if abs(corr) > 0.7 else "moderate" if abs(corr) > 0.3 else "weak"
+                        insights.append(
+                            f"🔗 **Correlation:** {strength.capitalize()} {direction} "
+                            f"correlation (r={corr:.2f}) between {x_col} and {y_col} "
+                            f"across {len(tmp)} data points"
+                        )
+                except Exception:
+                    pass
+
+            # ── Insight 6: Distribution shape for histogram ───────────────────
+            if numeric_cols:
+                try:
+                    col = x_col or y_col or numeric_cols[0]
+                    if col and col in df.columns:
+                        s = pd.to_numeric(df[col], errors="coerce").dropna()
+                        if not s.empty and len(s) > 2:
+                            skewness = s.skew()
+                            if abs(skewness) < 0.5:
+                                shape = "approximately symmetric (normal-like)"
+                            elif skewness > 0.5:
+                                shape = "right-skewed (positive skew)"
+                            else:
+                                shape = "left-skewed (negative skew)"
+                            kurtosis = s.kurtosis()
+                            if kurtosis > 2:
+                                tail = "heavy tails (outliers present)"
+                            else:
+                                tail = "light tails"
+                            insights.append(
+                                f"🔍 **Distribution:** {col} is {shape} with {tail}"
+                            )
+                except Exception:
+                    pass
+
+            # ── Insight 7: Missing data ───────────────────────────────────────
             miss_cols = [
                 c for c in df.columns
                 if cols.get(c, {}).get("missing_count", 0) > 0
@@ -310,32 +445,17 @@ class ChartRecommender:
                 pct = round(
                     100 * cols[worst]["missing_count"] / max(nrows, 1), 1
                 )
-                insights.append(
-                    f"⚠️ **{worst}** has {cols[worst]['missing_count']} missing values ({pct}%)."
-                )
+                if pct > 0:
+                    insights.append(
+                        f"⚠️ **Data Quality:** '{worst}' has "
+                        f"{cols[worst]['missing_count']} missing values ({pct}%)"
+                    )
 
-            # ── Insight 4: Total rows ─────────────────────────────────────────
-            insights.append(f"📋 Dataset contains **{nrows:,}** rows.")
+            # ── Insight 8: Dataset size ──────────────────────────────────────
+            if nrows > 0:
+                insights.append(f"📋 Based on **{nrows:,}** total data point{'s' if nrows != 1 else ''}")
 
         except Exception:
             pass  # insights are bonus — never break the chart
 
-        return insights[:5]  # cap at 5
-
-
-# ── Number formatter ──────────────────────────────────────────────────────────
-
-def _fmt(val: Any) -> str:
-    try:
-        f = float(val)
-        if math.isnan(f) or math.isinf(f):
-            return str(val)
-        if abs(f) >= 1_000_000:
-            return f"{f/1_000_000:.2f}M"
-        if abs(f) >= 1_000:
-            return f"{f/1_000:.1f}K"
-        if f == int(f):
-            return str(int(f))
-        return f"{f:.2f}"
-    except Exception:
-        return str(val)
+        return insights[:8]  # cap at 8

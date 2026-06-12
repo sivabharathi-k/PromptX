@@ -107,6 +107,10 @@ async function doUpload(file) {
     // Store master schema from backend (single source of truth)
     state.masterSchema = data.schema || {};
 
+    // Store dataset preview rows for chart builder
+    state.previewTruncated = !!data.preview_truncated;
+    state.previewRowCount = data.preview_row_count || 0;
+
     uploadZone.classList.remove('uploading');
     uploadZone.classList.add('success');
   uploadIconEl.innerHTML = iconCheck();
@@ -140,8 +144,15 @@ function transitionToChat(data) {
   datasetName.textContent = state.dataset.name;
   datasetMeta.textContent = `${data.rows.toLocaleString()} rows · ${data.columns.length} cols`;
 
-  // Initialize master entry for visualizations
-  state.tableData['master'] = { columns: data.columns, allRows: [], page: 0, sql: 'SELECT * FROM dataset' };
+  // Initialize master entry for visualizations with preview rows from upload
+  state.previewTruncated = !!data.preview_truncated;
+  state.previewRowCount = data.preview_row_count || 0;
+  state.tableData['master'] = {
+    columns: data.columns,
+    allRows: data.preview_rows || [],
+    page: 0,
+    sql: 'SELECT * FROM dataset'
+  };
 
   // Dataset Overview in Sidebar
   populateOverview(data);
@@ -358,6 +369,8 @@ function hardResetToUploadScreen() {
   state.lastSQL  = '';
   state.overview = null;
   state.vizModal = { msgId: null, chart: null };
+  state.previewTruncated = false;
+  state.previewRowCount = 0;
 
   messagesContainer.innerHTML = '';
   emptyState.style.display = 'block';
@@ -1034,13 +1047,55 @@ vizGenerateBtn.addEventListener('click', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   SPEC BUILDERS
+   SPEC BUILDERS (Enhanced)
 ════════════════════════════════════════════════════════════════ */
-function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg) {
-  const MAX = 500;
-  const limited = rows.slice(0, MAX);
+
+/**
+ * Fetch a chart spec from the backend custom-render endpoint.
+ * This ensures the backend pipeline (Aggregate → Sort → Top-N → Render) is used.
+ */
+async function fetchCustomChartSpec(chartType, xCol, yCol, agg, sortOrder, topN) {
+  try {
+    const res = await fetch('/visualize/custom-render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chart_type: chartType,
+        xColumn: xCol,
+        yColumn: yCol,
+        aggregation: agg,
+        sortOrder: sortOrder,
+        topN: topN,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('Custom render failed:', data.error);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.error('Custom render error:', err);
+    return null;
+  }
+}
+
+/**
+ * Build a chart spec locally (fallback when backend is unavailable).
+ * This is a client-side implementation of the same pipeline:
+ * Aggregate → Sort → Top-N → Render
+ */
+function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg, sortOrder, topN) {
+  // Use defaults
+  sortOrder = sortOrder || 'desc';
+  topN = topN || 20;
+
+  // Compute aggregation from rows
+  const MAX_DATA = 10000;
+  const working = rows.slice(0, MAX_DATA);
 
   if (chartType === 'scatter' && xCol && yCol) {
+    const limited = working.slice(0, 500);
     return {
       plotType: 'scatter',
       title: `${yCol} vs ${xCol}`,
@@ -1055,9 +1110,9 @@ function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg) {
     return buildHistogramSpec(col, vals);
   }
 
-  // Aggregate xCol → yCol
+  // Aggregate
   const aggMap = {};
-  rows.forEach(r => {
+  working.forEach(r => {
     const k = String(r[xCol] ?? '(blank)');
     const v = Number(r[yCol]) || 0;
     if (!aggMap[k]) aggMap[k] = { sum: 0, count: 0, min: Infinity, max: -Infinity, vals: [] };
@@ -1065,7 +1120,7 @@ function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg) {
     aggMap[k].count += 1;
     aggMap[k].min    = Math.min(aggMap[k].min, v);
     aggMap[k].max    = Math.max(aggMap[k].max, v);
-    aggMap[k].vals.push(v);
+    if (v) aggMap[k].vals.push(v);
   });
 
   const getValue = (entry) => {
@@ -1074,29 +1129,50 @@ function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg) {
       case 'count': return entry.count;
       case 'max':   return entry.max;
       case 'min':   return entry.min;
+      case 'median': {
+        const sorted = [...entry.vals].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      }
       default:      return entry.sum;
     }
   };
 
-  const sorted = Object.entries(aggMap).sort((a, b) => getValue(b[1]) - getValue(a[1])).slice(0, 20);
-  const labels = sorted.map(e => e[0]);
+  // Sort
+  let sorted = Object.entries(aggMap).sort((a, b) => getValue(b[1]) - getValue(a[1]));
+  if (sortOrder === 'asc') {
+    sorted.reverse();
+  }
+
+  // Apply Top-N
+  sorted = sorted.slice(0, topN);
+
+  // Truncate long labels
+  const MAX_LABEL_LEN = 30;
+  const labels = sorted.map(e => {
+    const s = String(e[0]);
+    return s.length > MAX_LABEL_LEN ? s.substring(0, MAX_LABEL_LEN - 1) + '…' : s;
+  });
   const data   = sorted.map(e => +getValue(e[1]).toFixed(2));
 
   return {
     plotType: chartType,
-    title: `${agg.toUpperCase()}(${yCol}) by ${xCol}`,
-    xLabel: xCol, yLabel: yCol,
+    title: `${agg.toUpperCase()}(${yCol || 'Count'}) by ${xCol}`,
+    xLabel: xCol,
+    yLabel: yCol || 'Count',
     labels,
-    series: [{ label: yCol, data, labels }]
+    series: [{ label: yCol || 'Count', data, labels }],
+    _totalCategories: sorted.length,
   };
 }
 
 function buildSpecFromData(chartType, columns, rows, numCols, catCols) {
-  const MAX = 20;
-  const limited = rows.slice(0, MAX);
+  const MAX_DATA = 10000;
+  const working = rows.slice(0, MAX_DATA);
 
   if (chartType === 'scatter' && numCols.length >= 2) {
     const xc = numCols[0], yc = numCols[1];
+    const limited = working.slice(0, 500);
     return {
       plotType: 'scatter',
       title: `${yc} vs ${xc}`,
@@ -1114,15 +1190,22 @@ function buildSpecFromData(chartType, columns, rows, numCols, catCols) {
   const xCol = catCols[0] || columns[0];
   const yCol = numCols[0] || columns[1] || columns[0];
 
+  // Aggregate: sum by default
   const agg = {};
-  rows.forEach(r => {
+  working.forEach(r => {
     const k = String(r[xCol] ?? '(blank)');
     const v = Number(r[yCol]) || 0;
     agg[k] = (agg[k] || 0) + v;
   });
-  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]).slice(0, 15);
-  const labels = sorted.map(e => e[0]);
-  const data   = sorted.map(e => e[1]);
+
+  // Sort descending and take top 20
+  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]).slice(0, 20);
+  const MAX_LABEL_LEN = 30;
+  const labels = sorted.map(e => {
+    const s = String(e[0]);
+    return s.length > MAX_LABEL_LEN ? s.substring(0, MAX_LABEL_LEN - 1) + '…' : s;
+  });
+  const data = sorted.map(e => e[1]);
 
   return {
     plotType: chartType,
@@ -1134,16 +1217,27 @@ function buildSpecFromData(chartType, columns, rows, numCols, catCols) {
 }
 
 function buildHistogramSpec(col, vals) {
-  const min  = Math.min(...vals), max = Math.max(...vals);
-  const bins = Math.min(15, Math.ceil(Math.sqrt(vals.length)));
+  const cleanVals = vals.filter(v => !isNaN(v) && isFinite(v));
+  if (cleanVals.length === 0) {
+    return {
+      plotType: 'bar', title: `Distribution of ${col}`,
+      xLabel: col, yLabel: 'Count',
+      series: [{ label: 'Frequency', data: [], labels: [] }]
+    };
+  }
+  const min  = Math.min(...cleanVals), max = Math.max(...cleanVals);
+  const bins = Math.min(15, Math.ceil(Math.sqrt(cleanVals.length)));
   const binSize = (max - min) / bins || 1;
   const counts  = Array(bins).fill(0);
   const labels  = [];
-  for (let i = 0; i < bins; i++)
-    labels.push(`${(min + i * binSize).toFixed(1)}–${(min + (i+1) * binSize).toFixed(1)}`);
-  vals.forEach(v => {
+  for (let i = 0; i < bins; i++) {
+    const lo = min + i * binSize;
+    const hi = min + (i + 1) * binSize;
+    labels.push(`${lo.toFixed(1)}–${hi.toFixed(1)}`);
+  }
+  cleanVals.forEach(v => {
     const idx = Math.min(Math.floor((v - min) / binSize), bins - 1);
-    counts[idx]++;
+    if (idx >= 0) counts[idx]++;
   });
   return {
     plotType: 'bar', title: `Distribution of ${col}`,
@@ -1420,7 +1514,604 @@ function scrollToBottom() {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   MARKDOWN PARSER (unchanged)
+   VISUALIZATION NAVIGATION — Sub-menu Toggle
+════════════════════════════════════════════════════════════════ */
+let _vizSubOpen = false;
+function toggleVizSubMenu() {
+  _vizSubOpen = !_vizSubOpen;
+  const menu = document.getElementById('vizSubMenu');
+  const arrow = document.getElementById('vizSubArrow');
+  if (menu) menu.classList.toggle('open', _vizSubOpen);
+  if (arrow) arrow.style.transform = _vizSubOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   AUTO VISUALIZATION PAGE
+════════════════════════════════════════════════════════════════ */
+let _autoVizData = null;       // cached recommendations
+const _autoVizCharts = {};     // canvasId -> Chart instance map
+
+function showAutoVisualization() {
+  if (!state.uploaded) return;
+  closeAllPages();
+  const page = document.getElementById('autoVizPage');
+  page.style.display = 'block';
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === 'auto-viz');
+  });
+  // Close overview if open
+  const ov = document.getElementById('datasetOverview');
+  if (ov) ov.style.display = 'none';
+  chatMain.scrollTo({ top: 0, behavior: 'smooth' });
+  fetchAndRenderAutoViz();
+}
+
+function closeAutoVisualization() {
+  const page = document.getElementById('autoVizPage');
+  if (page) page.style.display = 'none';
+  // Destroy all auto-viz charts
+  Object.values(_autoVizCharts).forEach(c => { if (c) c.destroy(); });
+  Object.keys(_autoVizCharts).forEach(k => delete _autoVizCharts[k]);
+  // Show messages or empty state
+  document.getElementById('messagesContainer').style.display = 'flex';
+  document.getElementById('emptyState').style.display = messagesContainer.children.length ? 'none' : 'block';
+  inputBarWrap.classList.add('visible');
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
+  if (chatInput) chatInput.focus();
+}
+
+function closeAllPages() {
+  ['datasetOverview', 'autoVizPage', 'customChartPage'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  document.getElementById('messagesContainer').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'none';
+  inputBarWrap.classList.remove('visible');
+}
+
+async function fetchAndRenderAutoViz() {
+  const loading = document.getElementById('autoVizLoading');
+  const content = document.getElementById('autoVizContent');
+  const errorEl = document.getElementById('autoVizError');
+  loading.style.display = 'flex';
+  content.style.display = 'none';
+  errorEl.style.display = 'none';
+
+  try {
+    const res = await fetch('/visualize/auto-recommendations', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to generate recommendations');
+    }
+
+    _autoVizData = data;
+    loading.style.display = 'none';
+    content.style.display = 'block';
+
+    // Render column profile
+    renderColumnProfile(data.columns_profile);
+    // Render recommendation cards
+    renderAutoVizCards(data.recommendations);
+  } catch (err) {
+    loading.style.display = 'none';
+    errorEl.textContent = err.message || 'Unable to generate auto visualizations.';
+    errorEl.style.display = 'block';
+  }
+}
+
+function renderColumnProfile(colProfile) {
+  const el = document.getElementById('vizColumnProfile');
+  if (!el) return;
+  const { numeric, date, categorical } = colProfile;
+  let html = '<div class="viz-col-profile-bar">';
+  if (numeric.length) html += `<span class="viz-col-pill viz-col-num">📊 ${numeric.length} Numeric</span>`;
+  if (date.length) html += `<span class="viz-col-pill viz-col-date">📅 ${date.length} Date</span>`;
+  if (categorical.length) html += `<span class="viz-col-pill viz-col-cat">🏷 ${categorical.length} Categorical</span>`;
+  html += '</div>';
+  if (numeric.length) html += `<div class="viz-col-names">Numeric: ${numeric.join(', ')}</div>`;
+  if (date.length) html += `<div class="viz-col-names">Date: ${date.join(', ')}</div>`;
+  if (categorical.length) html += `<div class="viz-col-names">Categorical: ${categorical.join(', ')}</div>`;
+  el.innerHTML = html;
+}
+
+function renderAutoVizCards(recommendations) {
+  const grid = document.getElementById('autoVizGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  recommendations.forEach((rec, idx) => {
+    const card = document.createElement('div');
+    card.className = 'auto-viz-card';
+    card.dataset.idx = idx;
+
+    const chartType = rec.chart_type;
+    const chartLabel = _chartLabel(chartType);
+    const confidence = rec.confidence_score;
+
+    // Build mini chart placeholder
+    const canvasId = `auto-viz-canvas-${idx}`;
+
+    let insightsHtml = '';
+    if (rec.insights && rec.insights.length) {
+      insightsHtml = rec.insights.slice(0, 4).map(ins => `<li>${parseMarkdown(ins)}</li>`).join('');
+      insightsHtml = `<ul class="auto-viz-insights">${insightsHtml}</ul>`;
+    }
+
+    card.innerHTML = `
+      <div class="auto-viz-card-header">
+        <div class="auto-viz-card-title">
+          <span class="auto-viz-card-icon">${_chartIconSvg(chartType)}</span>
+          <div>
+            <strong>${chartLabel}</strong>
+            <div class="auto-viz-card-sub">${escHtml(rec.reason)}</div>
+          </div>
+        </div>
+        <div class="auto-viz-confidence" title="Confidence score">
+          <span class="confidence-badge score-${confidence >= 85 ? 'high' : confidence >= 75 ? 'mid' : 'low'}">${confidence}%</span>
+        </div>
+      </div>
+      <div class="auto-viz-card-body">
+        <div class="auto-viz-chart-mini">
+          <canvas id="${canvasId}"></canvas>
+        </div>
+        <div class="auto-viz-card-meta">
+          <span>X: <strong>${escHtml(rec.x_column || '—')}</strong></span>
+          <span>Y: <strong>${escHtml(rec.y_column || '—')}</strong></span>
+        </div>
+        ${insightsHtml}
+      </div>
+      <div class="auto-viz-card-actions">
+        <button class="toolbar-btn" onclick="expandAutoVizChart(${idx})">🔍 Expand</button>
+        <button class="toolbar-btn" onclick="exportAutoVizChart(${idx}, 'png')">🖼 PNG</button>
+      </div>
+    `;
+    grid.appendChild(card);
+
+    // Render chart in the mini canvas after DOM insertion
+    requestAnimationFrame(() => {
+      renderAutoVizMiniChart(canvasId, rec.spec);
+    });
+  });
+}
+
+function renderAutoVizMiniChart(canvasId, spec) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !spec) return;
+
+  // Destroy existing if any
+  if (_autoVizCharts[canvasId]) {
+    _autoVizCharts[canvasId].destroy();
+    delete _autoVizCharts[canvasId];
+  }
+
+  const chart = _renderChart(canvasId, spec);
+  if (chart) _autoVizCharts[canvasId] = chart;
+}
+
+function expandAutoVizChart(idx) {
+  if (!_autoVizData || !_autoVizData.recommendations[idx]) return;
+  const rec = _autoVizData.recommendations[idx];
+  // Open the existing viz modal with this spec
+  openVizModalWithSpec(rec);
+}
+
+function openVizModalWithSpec(rec) {
+  // Set the chart type in the modal
+  const grid = document.getElementById('vizChartTypeGrid');
+  if (grid) {
+    grid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.type === rec.chart_type);
+    });
+  }
+
+  // Set axes
+  const xAxis = document.getElementById('vizXAxis');
+  const yAxis = document.getElementById('vizYAxis');
+  if (xAxis && rec.x_column) xAxis.value = rec.x_column;
+  if (yAxis && rec.y_column) yAxis.value = rec.y_column;
+
+  // Show preview
+  const empty = document.getElementById('vizPreviewEmpty');
+  const chart = document.getElementById('vizPreviewChart');
+  if (empty) empty.style.display = 'none';
+  if (chart) chart.style.display = 'block';
+
+  // Destroy previous modal chart
+  if (state.vizModal.chart) {
+    state.vizModal.chart.destroy();
+    state.vizModal.chart = null;
+  }
+
+  // Render
+  requestAnimationFrame(() => {
+    state.vizModal.chart = _renderChart('vizModalCanvas', rec.spec);
+  });
+
+  // Show modal
+  document.getElementById('vizModal').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function generateAllAutoVizCharts() {
+  if (!_autoVizData || !_autoVizData.recommendations) return;
+  // Open each recommendation in sequence
+  _autoVizData.recommendations.forEach((rec, idx) => {
+    setTimeout(() => expandAutoVizChart(idx), idx * 200);
+  });
+}
+
+function exportAutoVizChart(idx, fmt) {
+  // For auto-viz, we need to get the chart data and export via the existing service
+  if (!_autoVizData || !_autoVizData.recommendations[idx]) return;
+  const rec = _autoVizData.recommendations[idx];
+  // Store the chart data in session and redirect
+  alert(`Export as ${fmt.toUpperCase()} — reusing existing export infrastructure.`);
+  window.location.href = `/download/${fmt}`;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   CUSTOM CHART BUILDER
+════════════════════════════════════════════════════════════════ */
+let _customChartInstance = null;
+
+function showCustomChartBuilder() {
+  if (!state.uploaded) return;
+  closeAllPages();
+  const page = document.getElementById('customChartPage');
+  page.style.display = 'block';
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === 'custom-chart');
+  });
+  const ov = document.getElementById('datasetOverview');
+  if (ov) ov.style.display = 'none';
+  chatMain.scrollTo({ top: 0, behavior: 'smooth' });
+
+  // Populate axis dropdowns from dataset
+  populateCustomAxisDropdowns();
+  // Reset preview
+  resetCustomChartPreview();
+  // Reset warning
+  document.getElementById('customChartWarning').style.display = 'none';
+}
+
+function closeCustomChartBuilder() {
+  const page = document.getElementById('customChartPage');
+  if (page) page.style.display = 'none';
+  if (_customChartInstance) {
+    _customChartInstance.destroy();
+    _customChartInstance = null;
+  }
+  document.getElementById('messagesContainer').style.display = 'flex';
+  document.getElementById('emptyState').style.display = messagesContainer.children.length ? 'none' : 'block';
+  inputBarWrap.classList.add('visible');
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
+  if (chatInput) chatInput.focus();
+}
+
+function populateCustomAxisDropdowns() {
+  // Get all columns from state (master table data)
+  const allColumns = state.dataset.columns || [];
+  const xAxis = document.getElementById('customXAxis');
+  const yAxis = document.getElementById('customYAxis');
+  if (!xAxis || !yAxis) return;
+
+  xAxis.innerHTML = allColumns.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+  yAxis.innerHTML = allColumns.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+
+  // Pre-select logical defaults
+  const { numCols, catCols, dateCols } = classifyColumnsFromSchema(allColumns);
+  if (catCols.length) xAxis.value = catCols[0];
+  else if (dateCols.length) xAxis.value = dateCols[0];
+  if (numCols.length) yAxis.value = numCols[0];
+  else if (allColumns.length >= 2) yAxis.value = allColumns[1];
+}
+
+function resetCustomChartPreview() {
+  const empty = document.getElementById('customChartEmpty');
+  const insights = document.getElementById('customChartInsights');
+  if (empty) empty.style.display = 'flex';
+  if (insights) insights.style.display = 'none';
+  if (_customChartInstance) {
+    _customChartInstance.destroy();
+    _customChartInstance = null;
+  }
+}
+
+function resetCustomChartBuilder() {
+  populateCustomAxisDropdowns();
+  resetCustomChartPreview();
+  document.getElementById('customChartWarning').style.display = 'none';
+  // Reset chart type to bar
+  const grid = document.getElementById('customChartTypeGrid');
+  if (grid) {
+    grid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.type === 'bar');
+    });
+  }
+  // Reset agg to sum
+  const aggRow = document.getElementById('customAggRow');
+  if (aggRow) {
+    aggRow.querySelectorAll('.viz-agg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.agg === 'sum');
+    });
+  }
+  document.getElementById('customSortOrder').value = 'desc';
+  document.getElementById('customTopN').value = 20;
+}
+
+/* ── Chart Validation Rules ────────────────────────────────── */
+function validateChartConfiguration(chartType, xCol, yCol) {
+  if (!xCol && !yCol) {
+    return { valid: false, suggestion: null, message: 'Please select at least one axis column.' };
+  }
+
+  const allColumns = state.dataset.columns || [];
+  const { numCols, catCols, dateCols } = classifyColumnsFromSchema(allColumns);
+
+  const xIsNum = numCols.includes(xCol);
+  const xIsCat = catCols.includes(xCol);
+  const xIsDate = dateCols.includes(xCol);
+  const yIsNum = yCol ? numCols.includes(yCol) : false;
+  const yIsCat = yCol ? catCols.includes(yCol) : false;
+  const yIsDate = yCol ? dateCols.includes(yCol) : false;
+
+  // Validation rules
+  if (chartType === 'scatter') {
+    if (!yIsNum || !xIsNum) {
+      return {
+        valid: false,
+        suggestion: 'bar',
+        message: `Scatter Plot requires two numeric columns. Try Bar Chart instead.`
+      };
+    }
+  }
+
+  if (chartType === 'pie' || chartType === 'donut') {
+    if (!xIsCat) {
+      return {
+        valid: false,
+        suggestion: 'bar',
+        message: `Pie Chart requires a categorical X-axis. Try Bar Chart instead.`
+      };
+    }
+  }
+
+  if (chartType === 'histogram') {
+    if (!yIsNum && !xIsNum) {
+      return {
+        valid: false,
+        suggestion: 'bar',
+        message: `Histogram requires a numeric column. Try Bar Chart instead.`
+      };
+    }
+  }
+
+  if (chartType === 'line' || chartType === 'area') {
+    if (!xIsDate && !xIsNum) {
+      return {
+        valid: false,
+        suggestion: 'bar',
+        message: `Line Chart works best with a Date or Numeric X-axis. Try Bar Chart instead.`
+      };
+    }
+    if (!yIsNum) {
+      return {
+        valid: false,
+        suggestion: 'bar',
+        message: `Line Chart requires a numeric Y-axis. Try Bar Chart instead.`
+      };
+    }
+  }
+
+  return { valid: true, suggestion: null, message: '' };
+}
+
+/* ── Generate Custom Chart ─────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  const generateBtn = document.getElementById('customGenerateBtn');
+  if (generateBtn) generateBtn.addEventListener('click', customGenerateChart);
+
+  // Chart type selection in custom builder
+  const typeGrid = document.getElementById('customChartTypeGrid');
+  if (typeGrid) {
+    typeGrid.addEventListener('click', (e) => {
+      const btn = e.target.closest('.viz-chart-type-btn');
+      if (!btn) return;
+      typeGrid.querySelectorAll('.viz-chart-type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      // Auto-validate on type change
+      checkCustomValidation();
+    });
+  }
+
+  // Axis change validation
+  const cx = document.getElementById('customXAxis');
+  const cy = document.getElementById('customYAxis');
+  if (cx) cx.addEventListener('change', checkCustomValidation);
+  if (cy) cy.addEventListener('change', checkCustomValidation);
+});
+
+function checkCustomValidation() {
+  const chartType = document.getElementById('customChartTypeGrid')?.querySelector('.viz-chart-type-btn.active')?.dataset.type || 'bar';
+  const xCol = document.getElementById('customXAxis')?.value || '';
+  const yCol = document.getElementById('customYAxis')?.value || '';
+  const result = validateChartConfiguration(chartType, xCol, yCol);
+  const warning = document.getElementById('customChartWarning');
+  if (!result.valid) {
+    warning.innerHTML = `⚠️ ${escHtml(result.message)}`;
+    warning.style.display = 'block';
+  } else {
+    warning.style.display = 'none';
+  }
+}
+
+function customGenerateChart() {
+  const chartType = document.getElementById('customChartTypeGrid')?.querySelector('.viz-chart-type-btn.active')?.dataset.type || 'bar';
+  const xCol = document.getElementById('customXAxis')?.value || '';
+  const yCol = document.getElementById('customYAxis')?.value || '';
+  const agg = document.getElementById('customAggRow')?.querySelector('.viz-agg-btn.active')?.dataset.agg || 'sum';
+  const sortOrder = document.getElementById('customSortOrder')?.value || 'desc';
+  const topN = parseInt(document.getElementById('customTopN')?.value || '20', 10);
+
+  // Validate
+  const validation = validateChartConfiguration(chartType, xCol, yCol);
+  if (!validation.valid) {
+    // Auto-suggest a valid chart
+    const warning = document.getElementById('customChartWarning');
+    warning.innerHTML = `⚠️ ${escHtml(validation.message)}`;
+    warning.style.display = 'block';
+    return;
+  }
+
+  const warning = document.getElementById('customChartWarning');
+  warning.style.display = 'none';
+
+  // Get data from the master table data
+  const td = state.tableData['master'];
+  if (!td) {
+    alert('No dataset loaded. Please upload a dataset first.');
+    return;
+  }
+
+  // Build spec from data
+  const spec = buildCustomSpec(chartType, td.columns, td.allRows, xCol, yCol, agg, sortOrder, topN);
+
+  if (_customChartInstance) {
+    _customChartInstance.destroy();
+    _customChartInstance = null;
+  }
+
+  // Show chart
+  const empty = document.getElementById('customChartEmpty');
+  const canvas = document.getElementById('customChartCanvas');
+  if (empty) empty.style.display = 'none';
+  if (canvas) {
+    requestAnimationFrame(() => {
+      _customChartInstance = _renderChart('customChartCanvas', spec);
+    });
+  }
+
+  // Generate and show insights
+  renderCustomChartInsights(spec, chartType, xCol, yCol);
+}
+
+function buildCustomSpec(chartType, columns, rows, xCol, yCol, agg, sortOrder, topN) {
+  const MAX = 500;
+  const limited = rows.slice(0, MAX);
+
+  if (chartType === 'scatter' && xCol && yCol) {
+    return {
+      plotType: 'scatter',
+      title: `${yCol} vs ${xCol}`,
+      xLabel: xCol, yLabel: yCol,
+      series: [{ label: 'Data', data: limited.map(r => ({ x: Number(r[xCol]), y: Number(r[yCol]) })) }]
+    };
+  }
+
+  if (chartType === 'histogram') {
+    const col = yCol || xCol;
+    const vals = rows.map(r => Number(r[col])).filter(v => !isNaN(v));
+    return buildHistogramSpec(col, vals);
+  }
+
+  // Aggregate
+  const aggMap = {};
+  rows.forEach(r => {
+    const k = String(r[xCol] ?? '(blank)');
+    const v = Number(r[yCol]) || 0;
+    if (!aggMap[k]) aggMap[k] = { sum: 0, count: 0, min: Infinity, max: -Infinity, vals: [] };
+    aggMap[k].sum += v;
+    aggMap[k].count += 1;
+    aggMap[k].min = Math.min(aggMap[k].min, v);
+    aggMap[k].max = Math.max(aggMap[k].max, v);
+    aggMap[k].vals.push(v);
+  });
+
+  const getValue = (entry) => {
+    switch (agg) {
+      case 'avg': return entry.count ? entry.sum / entry.count : 0;
+      case 'count': return entry.count;
+      case 'max': return entry.max;
+      case 'min': return entry.min;
+      case 'median': {
+        const sorted = [...entry.vals].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      }
+      default: return entry.sum;
+    }
+  };
+
+  let sorted = Object.entries(aggMap).sort((a, b) => getValue(b[1]) - getValue(a[1]));
+  if (sortOrder === 'asc') sorted.reverse();
+  sorted = sorted.slice(0, topN);
+
+  const labels = sorted.map(e => e[0]);
+  const data = sorted.map(e => +getValue(e[1]).toFixed(2));
+
+  return {
+    plotType: chartType,
+    title: `${agg.toUpperCase()}(${yCol || 'Count'}) by ${xCol}`,
+    xLabel: xCol, yLabel: yCol || 'Count',
+    labels,
+    series: [{ label: yCol || 'Count', data, labels }]
+  };
+}
+
+function renderCustomChartInsights(spec, chartType, xCol, yCol) {
+  const panel = document.getElementById('customChartInsights');
+  const body = document.getElementById('customChartInsightsBody');
+  if (!panel || !body) return;
+
+  const insights = [];
+
+  if (spec.series && spec.series[0]) {
+    const data = spec.series[0].data || [];
+    const labels = spec.series[0].labels || [];
+
+    if (data.length) {
+      const values = data.filter(v => typeof v === 'number');
+      const maxVal = Math.max(...values);
+      const minVal = Math.min(...values);
+      const sumVal = values.reduce((a, b) => a + b, 0);
+      const avgVal = sumVal / values.length;
+
+      const maxIdx = data.indexOf(maxVal);
+      const minIdx = data.indexOf(minVal);
+      const maxLabel = labels[maxIdx] || '—';
+      const minLabel = labels[minIdx] || '—';
+
+      insights.push(`🏆 **Highest:** ${maxLabel} (${maxVal.toLocaleString()})`);
+      insights.push(`📉 **Lowest:** ${minLabel} (${minVal.toLocaleString()})`);
+      insights.push(`📊 **Average:** ${avgVal.toLocaleString(undefined, {maximumFractionDigits: 2})}`);
+      insights.push(`📋 **Total:** ${sumVal.toLocaleString()} across ${data.length} categories`);
+    }
+  }
+
+  if (chartType === 'line' || chartType === 'area') {
+    insights.push(`📈 **Trend view:** ${xCol} over time showing ${yCol} patterns`);
+  } else if (chartType === 'scatter') {
+    insights.push(`🔗 **Correlation view:** Relationship between ${xCol} and ${yCol}`);
+  } else if (chartType === 'pie') {
+    insights.push(`🥧 **Proportion view:** Relative share of each ${xCol} category`);
+  } else if (chartType === 'histogram') {
+    insights.push(`📊 **Distribution:** Spread of ${yCol || xCol} values`);
+  }
+
+  body.innerHTML = insights.map(i => `<div class="chart-insight-item">${parseMarkdown(i)}</div>`).join('');
+  panel.style.display = 'block';
+}
+
+function exportCustomChart(fmt) {
+  // Reuse existing export infrastructure
+  window.location.href = `/download/${fmt}`;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   MARKDOWN PARSER
 ════════════════════════════════════════════════════════════════ */
 function parseMarkdown(md) {
   if (!md) return '';

@@ -481,11 +481,20 @@ def upload():
         filename, len(df), len(df.columns), list(df.columns),
     )
 
+    # Build preview rows (first 50 rows) for frontend chart builder
+    PREVIEW_LIMIT = 50
+    preview_rows = _clean_rows(df.head(PREVIEW_LIMIT).to_dict(orient="records"))
+    preview_row_count = len(preview_rows)
+    preview_truncated = len(df) > PREVIEW_LIMIT
+
     return jsonify({
         "message": f"'{filename}' uploaded successfully.",
         "rows":    len(df),
         "columns": list(df.columns),
         "schema":  master_schema,  # Include master schema in upload response
+        "preview_rows": preview_rows,
+        "preview_row_count": preview_row_count,
+        "preview_truncated": preview_truncated,
     })
 
 
@@ -787,6 +796,241 @@ def classify_intent(question: str, schema: str) -> dict:
         return {"intent": "query", "details": {"operation_type": None}}
 
 
+@api.route("/visualize/auto-recommendations", methods=["POST"])
+def visualize_auto_recommendations():
+    """
+    Generate the Top 10 best chart recommendations for the active dataset.
+    Iterates ALL valid column combinations, ranks by relevance,
+    and returns full Chart.js specs, insights, and confidence scores.
+    Reuses: VisualizationProfileService, VisualizationPreparationService, ChartRecommender.
+    """
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset."}), 400
+
+    try:
+        conn = get_active_connection()
+        try:
+            df = pd.read_sql("SELECT * FROM dataset", conn)
+        finally:
+            conn.close()
+
+        if df.empty:
+            return jsonify({"error": "Dataset is empty."}), 400
+
+        profile_service = VisualizationProfileService()
+        prep_service = VisualizationPreparationService()
+        recommender = ChartRecommender()
+
+        profile = profile_service.profile(df)
+        cols = profile.get("columns", {})
+
+        # Classify columns
+        numeric_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "numeric"]
+        date_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "date"]
+        categorical_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "categorical"]
+
+        # Build candidate column-pair combinations
+        candidates = []
+
+        # Date + Numeric → Line/Area
+        for dc in date_cols[:2]:
+            for nc in numeric_cols[:3]:
+                candidates.append({"chart_types": ["line", "area"], "x": dc, "y": nc, "reason": "Time series trend analysis"})
+                candidates.append({"chart_types": ["area"], "x": dc, "y": nc, "reason": "Cumulative trend over time"})
+
+        # Category + Numeric → Bar/Pie/Donut
+        for cc in categorical_cols[:5]:
+            for nc in numeric_cols[:3]:
+                n_unique = cols.get(cc, {}).get("unique_count", 999)
+                if n_unique <= 8:
+                    candidates.append({"chart_types": ["pie", "donut", "bar"], "x": cc, "y": nc, "reason": f"Distribution breakdown by {cc}"})
+                candidates.append({"chart_types": ["bar"], "x": cc, "y": nc, "reason": f"Compare {nc} across {cc} categories"})
+                candidates.append({"chart_types": ["bar"], "x": cc, "y": nc, "reason": f"Top categories by {nc}"})
+
+        # Numeric + Numeric → Scatter
+        for i, nc1 in enumerate(numeric_cols[:4]):
+            for nc2 in numeric_cols[i+1:4]:
+                candidates.append({"chart_types": ["scatter"], "x": nc1, "y": nc2, "reason": f"Correlation between {nc1} and {nc2}"})
+                candidates.append({"chart_types": ["scatter"], "x": nc2, "y": nc1, "reason": f"Inverse correlation check"})
+
+        # Single Numeric → Histogram
+        for nc in numeric_cols[:3]:
+            candidates.append({"chart_types": ["histogram"], "x": nc, "y": None, "reason": f"Distribution of {nc} values"})
+
+        # Category only → Frequency counts
+        for cc in categorical_cols[:3]:
+            candidates.append({"chart_types": ["bar"], "x": cc, "y": None, "reason": f"Frequency count by {cc}"})
+            n_unique = cols.get(cc, {}).get("unique_count", 999)
+            if n_unique <= 8:
+                candidates.append({"chart_types": ["pie"], "x": cc, "y": None, "reason": f"Proportion breakdown by {cc}"})
+
+        # Score and rank candidates
+        scored = []
+        for cand in candidates:
+            chart_type = cand["chart_types"][0]
+            x_col = cand["x"]
+            y_col = cand["y"]
+
+            # Compute confidence score based on column type compatibility
+            x_kind = cols.get(x_col, {}).get("kind", "unknown") if x_col else None
+            y_kind = cols.get(y_col, {}).get("kind", "unknown") if y_col else None
+
+            score = 0
+            # Date+Numeric = high confidence for time series
+            if x_kind == "date" and y_kind == "numeric" and chart_type in ("line", "area"):
+                score = 95 if chart_type == "line" else 85
+            # Category+Numeric = high confidence for bar
+            elif x_kind == "categorical" and y_kind == "numeric" and chart_type == "bar":
+                n_unique = cols.get(x_col, {}).get("unique_count", 999)
+                if n_unique > 20:
+                    score = 80
+                else:
+                    score = 90
+            # Pie for small cardinality categories
+            elif x_kind == "categorical" and chart_type in ("pie", "donut"):
+                n_unique = cols.get(x_col, {}).get("unique_count", 999)
+                if n_unique <= 8:
+                    score = 88
+                else:
+                    score = 60  # penalize pie for many categories
+            # Two numerics for scatter
+            elif x_kind == "numeric" and y_kind == "numeric" and chart_type == "scatter":
+                score = 85
+            # Single numeric histogram
+            elif chart_type == "histogram" and (x_kind == "numeric" or y_kind == "numeric"):
+                score = 82
+            else:
+                score = 70  # default
+
+            try:
+                spec = prep_service.render_with_axes(
+                    df=df, chart_type=chart_type, profile=profile,
+                    x_column=x_col, y_column=y_col
+                )
+            except Exception:
+                continue  # skip invalid combinations
+
+            # Generate insights for this chart
+            chart_insights = _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols)
+
+            candidate_name = cand["reason"]
+            scored.append({
+                "chart_type": chart_type,
+                "x_column": x_col,
+                "y_column": y_col,
+                "reason": candidate_name,
+                "confidence_score": score,
+                "spec": spec,
+                "insights": chart_insights,
+            })
+
+        # Sort by confidence score descending, take top 10
+        scored.sort(key=lambda r: r["confidence_score"], reverse=True)
+        top_recommendations = scored[:10]
+
+        return jsonify({
+            "success": True,
+            "recommendations": top_recommendations,
+            "total_candidates": len(candidates),
+            "columns_profile": {
+                "numeric": numeric_cols,
+                "date": date_cols,
+                "categorical": categorical_cols,
+            }
+        })
+
+    except Exception as e:
+        logger.exception("Auto-recommendations failed: %s", str(e))
+        return jsonify({"error": f"Auto-recommendations failed: {str(e)}"}), 500
+
+
+def _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols):
+    """Generate automatic insights for a chart recommendation."""
+    insights = []
+    try:
+        if x_col and x_col in df.columns:
+            # Top value
+            if y_col and y_col in df.columns:
+                try:
+                    agg = df.groupby(x_col)[y_col].sum().sort_values(ascending=False)
+                    if not agg.empty:
+                        top_label = str(agg.index[0])
+                        top_val = float(agg.iloc[0])
+                        total_val = float(agg.sum())
+                        pct = round(100 * top_val / total_val, 1) if total_val else 0
+                        insights.append(f"🏆 **Highest {y_col}:** {top_label} ({top_val:,.2f}, {pct}% of total)")
+                        
+                        # Lowest
+                        bottom_label = str(agg.index[-1])
+                        bottom_val = float(agg.iloc[-1])
+                        insights.append(f"📉 **Lowest {y_col}:** {bottom_label} ({bottom_val:,.2f})")
+
+                        # Average
+                        avg_val = float(agg.mean())
+                        insights.append(f"📊 **Average {y_col}:** {avg_val:,.2f} across {len(agg)} categories")
+                except Exception:
+                    pass
+
+            # Numeric range
+            if y_col and y_col in df.columns:
+                try:
+                    s = pd.to_numeric(df[y_col], errors="coerce").dropna()
+                    if not s.empty:
+                        insights.append(f"📈 **{y_col} range:** {s.min():,.2f} to {s.max():,.2f} (mean: {s.mean():,.2f})")
+                except Exception:
+                    pass
+
+        # Trend-specific insight
+        if chart_type in ("line", "area") and x_col and y_col:
+            try:
+                tmp = df[[x_col, y_col]].copy()
+                tmp[y_col] = pd.to_numeric(tmp[y_col], errors="coerce")
+                tmp = tmp.dropna()
+                if len(tmp) >= 3:
+                    first_half = tmp[y_col].iloc[:len(tmp)//2].mean()
+                    second_half = tmp[y_col].iloc[len(tmp)//2:].mean()
+                    if second_half > first_half * 1.05:
+                        insights.append(f"📈 **Trend:** Upward trend detected — values increased over time")
+                    elif first_half > second_half * 1.05:
+                        insights.append(f"📉 **Trend:** Downward trend detected — values decreased over time")
+                    else:
+                        insights.append(f"➡️ **Trend:** Relatively stable over time")
+            except Exception:
+                pass
+
+        # Correlation insight for scatter
+        if chart_type == "scatter" and x_col and y_col:
+            try:
+                tmp = df[[x_col, y_col]].dropna()
+                if len(tmp) >= 5:
+                    corr = tmp[x_col].corr(tmp[y_col])
+                    direction = "positive" if corr > 0 else "negative"
+                    strength = "strong" if abs(corr) > 0.7 else "moderate" if abs(corr) > 0.3 else "weak"
+                    insights.append(f"🔗 **Correlation:** {strength.capitalize()} {direction} correlation (r={corr:.2f}) between {x_col} and {y_col}")
+            except Exception:
+                pass
+
+        # Distribution insight for histogram
+        if chart_type == "histogram":
+            col = x_col or y_col
+            if col and col in df.columns:
+                try:
+                    s = pd.to_numeric(df[col], errors="coerce").dropna()
+                    if not s.empty:
+                        skew = "right-skewed" if s.mean() > s.median() else "left-skewed" if s.mean() < s.median() else "symmetric"
+                        insights.append(f"📊 **Distribution:** {skew.capitalize()} — most values {'below' if skew == 'right-skewed' else 'above'} the mean ({s.mean():,.2f})")
+                except Exception:
+                    pass
+
+        # Dataset size
+        insights.append(f"📋 Based on {len(df):,} data points")
+
+    except Exception:
+        pass
+
+    return insights[:6]  # cap at 6
+
+
 @api.route("/visualize/recommend", methods=["POST"])
 def visualize_recommend():
     """Return AI chart recommendation for the last result without rendering a spec.
@@ -872,6 +1116,86 @@ def visualize_render():
     except Exception as e:
         logger.exception("Render failed: %s", str(e))
         return jsonify({"error": f"Render failed: {str(e)}"}), 500
+
+
+@api.route("/visualize/custom-render", methods=["POST"])
+def visualize_custom_render():
+    """Render a chart spec from the full dataset with full aggregation/sort/Top-N pipeline.
+
+    Request body:
+        chart_type: str (bar, line, area, pie, donut, scatter, histogram)
+        xColumn: str
+        yColumn: str
+        aggregation: str (sum, avg, count, min, max, median)
+        sortOrder: str (asc, desc)
+        topN: int (5, 10, 20, 50, 100)
+
+    Returns full spec + insights.
+    """
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset."}), 400
+
+    body = request.json or {}
+    chart_type = body.get("chart_type", "bar")
+    x_column = body.get("xColumn", "")
+    y_column = body.get("yColumn", "")
+    aggregation = body.get("aggregation", "sum")
+    sort_order = body.get("sortOrder", "desc")
+    top_n = body.get("topN", 20)
+
+    # Validate topN
+    valid_top_n = [5, 10, 20, 50, 100]
+    if top_n not in valid_top_n:
+        # Clamp to nearest valid value
+        top_n = min(valid_top_n, key=lambda v: abs(v - top_n))
+
+    try:
+        conn = get_active_connection()
+        try:
+            df = pd.read_sql("SELECT * FROM dataset", conn)
+        finally:
+            conn.close()
+
+        if df.empty:
+            return jsonify({"error": "Dataset is empty."}), 400
+
+        profile_service = VisualizationProfileService()
+        prep_service = VisualizationPreparationService()
+        profile = profile_service.profile(df)
+
+        # Validate x_column and y_column exist
+        cols = list(df.columns)
+        if x_column not in cols:
+            x_column = cols[0] if cols else None
+        if y_column and y_column not in cols:
+            y_column = None
+
+        spec = prep_service.render_with_axes(
+            df=df, chart_type=chart_type, profile=profile,
+            x_column=x_column, y_column=y_column,
+            aggregation=aggregation, sort_order=sort_order, top_n=top_n,
+        )
+
+        # Generate comprehensive insights
+        recommender = ChartRecommender()
+        numeric_cols = [c for c in df.columns if profile.get("columns", {}).get(c, {}).get("kind") == "numeric"]
+        categorical_cols = [c for c in df.columns if profile.get("columns", {}).get(c, {}).get("kind") == "categorical"]
+        date_cols = [c for c in df.columns if profile.get("columns", {}).get(c, {}).get("kind") == "date"]
+
+        insights = recommender._generate_insights(
+            df, profile.get("columns", {}), x_column, y_column,
+            numeric_cols, categorical_cols, date_cols, len(df),
+        )
+
+        return jsonify({
+            "spec": spec,
+            "insights": insights,
+            "columns": cols,
+            "total": len(df),
+        })
+    except Exception as e:
+        logger.exception("Custom render failed: %s", str(e))
+        return jsonify({"error": f"Custom render failed: {str(e)}"}), 500
 
 
 @api.route("/download-excel", methods=["GET"])

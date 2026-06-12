@@ -193,14 +193,33 @@
             </div>
           </div>
 
-          <!-- SECTION 2: NAVIGATION (Single Entry — Dataset Overview) -->
+          <!-- SECTION 2: NAVIGATION -->
           <div class="sidebar-section">
             <div class="sidebar-label">Navigation</div>
             <nav class="sidebar-nav">
               <button class="sidebar-nav-item" data-view="overview" onclick="showDatasetOverview()">
                 <span class="nav-item-icon-box"><i class="ti ti-dashboard"></i></span>
-                <span>Dataset Overview</span>
+                <span>📊 Dataset Overview</span>
               </button>
+
+              <!-- Visualization Toggle -->
+              <button class="sidebar-nav-item sidebar-sub-toggle" data-view="visualization" onclick="toggleVizSubMenu()">
+                <span class="nav-item-icon-box"><i class="ti ti-chart-bar"></i></span>
+                <span>📈 Visualization</span>
+                <span class="sub-toggle-arrow" id="vizSubArrow">▾</span>
+              </button>
+
+              <!-- Visualization Sub-menu -->
+              <div class="sidebar-sub-menu" id="vizSubMenu">
+                <button class="sidebar-nav-item sidebar-sub-item" data-view="auto-viz" onclick="showAutoVisualization()">
+                  <span class="nav-item-icon-box"><i class="ti ti-sparkles"></i></span>
+                  <span>✨ Auto Visualization</span>
+                </button>
+                <button class="sidebar-nav-item sidebar-sub-item" data-view="custom-chart" onclick="showCustomChartBuilder()">
+                  <span class="nav-item-icon-box"><i class="ti ti-tools"></i></span>
+                  <span>🛠 Custom Chart Builder</span>
+                </button>
+              </div>
             </nav>
           </div>
         </div>
@@ -290,6 +309,160 @@
                 </button>
               </div>
             </section>
+          </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             AUTO VISUALIZATION PAGE
+        ════════════════════════════════════════════════════════════ -->
+        <section id="autoVizPage" class="dataset-overview-page" style="display:none;" aria-labelledby="autoVizTitle">
+          <div class="overview-page-header">
+            <div>
+              <div class="overview-eyebrow">✨ One-click chart generation</div>
+              <h1 id="autoVizTitle">Auto Visualization</h1>
+              <p>AI automatically analyzes your dataset and generates the most relevant charts.</p>
+            </div>
+            <button class="overview-close-btn" type="button" onclick="closeAutoVisualization()" aria-label="Return to chat">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+
+          <div id="autoVizLoading" class="overview-loading" style="display:flex;">
+            <span class="overview-spinner"></span>
+            Analyzing dataset and generating recommendations...
+          </div>
+          <div id="autoVizError" class="overview-error" style="display:none;"></div>
+
+          <div id="autoVizContent" style="display:none;">
+            <!-- Column profile summary -->
+            <div class="viz-column-profile" id="vizColumnProfile"></div>
+
+            <!-- Generate All button -->
+            <div class="auto-viz-actions">
+              <button class="auto-viz-generate-all" onclick="generateAllAutoVizCharts()">
+                <i class="ti ti-sparkles"></i> Generate All Charts
+              </button>
+            </div>
+
+            <!-- Recommendations grid -->
+            <div class="auto-viz-grid" id="autoVizGrid"></div>
+          </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             CUSTOM CHART BUILDER PAGE
+        ════════════════════════════════════════════════════════════ -->
+        <section id="customChartPage" class="dataset-overview-page" style="display:none;" aria-labelledby="customChartTitle">
+          <div class="overview-page-header">
+            <div>
+              <div class="overview-eyebrow">🛠 Build your own chart</div>
+              <h1 id="customChartTitle">Custom Chart Builder</h1>
+              <p>Select chart type, axes, aggregation, and filters — no coding needed.</p>
+            </div>
+            <button class="overview-close-btn" type="button" onclick="closeCustomChartBuilder()" aria-label="Return to chat">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+
+          <div id="customChartContent">
+            <div class="custom-chart-layout">
+              <!-- Left: Controls -->
+              <div class="custom-chart-controls">
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Chart Type</label>
+                  <div class="viz-chart-type-grid" id="customChartTypeGrid">
+                    <button class="viz-chart-type-btn active" data-type="bar" aria-label="Bar">Bar</button>
+                    <button class="viz-chart-type-btn" data-type="line" aria-label="Line">Line</button>
+                    <button class="viz-chart-type-btn" data-type="pie" aria-label="Pie">Pie</button>
+                    <button class="viz-chart-type-btn" data-type="scatter" aria-label="Scatter">Scatter</button>
+                    <button class="viz-chart-type-btn" data-type="histogram" aria-label="Histogram">Histogram</button>
+                    <button class="viz-chart-type-btn" data-type="area" aria-label="Area">Area</button>
+                  </div>
+                </div>
+
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">X-Axis <span class="viz-ctrl-sub">(Category / Label)</span></label>
+                  <select class="viz-select" id="customXAxis"></select>
+                </div>
+
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Y-Axis <span class="viz-ctrl-sub">(Value)</span></label>
+                  <select class="viz-select" id="customYAxis"></select>
+                </div>
+
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Aggregation Type</label>
+                  <div class="viz-agg-row" id="customAggRow">
+                    <button class="viz-agg-btn active" data-agg="sum">Sum</button>
+                    <button class="viz-agg-btn" data-agg="avg">Avg</button>
+                    <button class="viz-agg-btn" data-agg="count">Count</button>
+                    <button class="viz-agg-btn" data-agg="max">Max</button>
+                    <button class="viz-agg-btn" data-agg="min">Min</button>
+                    <button class="viz-agg-btn" data-agg="median">Median</button>
+                  </div>
+                </div>
+
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Sort Order</label>
+                  <select class="viz-select" id="customSortOrder">
+                    <option value="desc">Descending (High → Low)</option>
+                    <option value="asc">Ascending (Low → High)</option>
+                  </select>
+                </div>
+
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Top N Results</label>
+                  <input type="number" class="viz-input" id="customTopN" value="20" min="3" max="200" />
+                </div>
+
+                <!-- Validation warning -->
+                <div id="customChartWarning" class="custom-chart-warning" style="display:none;"></div>
+
+                <div class="custom-chart-actions">
+                  <button class="auto-viz-generate-all" id="customGenerateBtn">
+                    <i class="ti ti-chart-bar"></i> Generate Chart
+                  </button>
+                  <button class="custom-reset-btn" onclick="resetCustomChartBuilder()">
+                    <i class="ti ti-refresh"></i> Reset
+                  </button>
+                </div>
+              </div>
+
+              <!-- Right: Preview + Insights -->
+              <div class="custom-chart-preview">
+                <div class="custom-chart-preview-header">
+                  <h3>Chart Preview</h3>
+                  <!-- Export buttons -->
+                  <div class="custom-chart-export-actions">
+                    <button class="toolbar-btn" onclick="exportCustomChart('png')" title="Export as PNG">🖼 PNG</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('pdf')" title="Export as PDF">📄 PDF</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('xlsx')" title="Export as Excel">📊 Excel</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('docx')" title="Export as Word">📝 Word</button>
+                  </div>
+                </div>
+
+                <div class="custom-chart-canvas-wrap">
+                  <canvas id="customChartCanvas"></canvas>
+                  <div id="customChartEmpty" class="viz-preview-empty" style="display:flex;">
+                    <div class="viz-preview-empty-icon" aria-hidden="true">
+                      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <path d="M7 7h10"/>
+                        <path d="M7 12h10"/>
+                        <path d="M7 17h7"/>
+                      </svg>
+                    </div>
+                    <p>Configure and click<br><strong>Generate Chart</strong></p>
+                  </div>
+                </div>
+
+                <!-- Insights Panel -->
+                <div id="customChartInsights" class="chart-insights-panel" style="display:none;">
+                  <h4><i class="ti ti-bulb"></i> Chart Insights</h4>
+                  <div id="customChartInsightsBody" class="chart-insights-body"></div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
