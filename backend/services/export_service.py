@@ -3,6 +3,7 @@ Export service — converts query results into Excel, Image, PDF, and Word files
 """
 
 import io
+import re
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -10,11 +11,15 @@ import pandas as pd
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor, Twips
+from docx.shared import Inches, Pt, RGBColor, Twips
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.styles import Font as XLFont, PatternFill
+from PIL import Image as PILImage
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 matplotlib.use("Agg")
 
@@ -248,5 +253,187 @@ def to_word(df: pd.DataFrame, title: str = "Query Results") -> io.BytesIO:
 
     buffer = io.BytesIO()
     doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+# ── Chart export (image + insights + underlying data) ───────────
+
+def _strip_markdown(text: str) -> str:
+    """Remove markdown bold markers, returning plain text."""
+    return re.sub(r"\*\*(.+?)\*\*", r"\1", text or "")
+
+
+def _md_to_reportlab(text: str) -> str:
+    """Convert a small markdown subset (bold only) to ReportLab Paragraph markup."""
+    text = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+
+
+def _add_markdown_paragraph(doc: Document, text: str, size: int = 10) -> None:
+    """Add a bulleted paragraph to a docx document, rendering **bold** spans as bold runs."""
+    para = doc.add_paragraph(style="List Bullet")
+    for part in re.split(r"(\*\*.+?\*\*)", text or ""):
+        if not part:
+            continue
+        is_bold = part.startswith("**") and part.endswith("**")
+        run = para.add_run(part[2:-2] if is_bold else part)
+        run.bold = is_bold
+        run.font.size = Pt(size)
+
+
+def _fmt_chart_value(v) -> str:
+    try:
+        fv = float(v)
+        return f"{int(fv):,}" if fv == int(fv) else f"{fv:,.2f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def to_chart_pdf(title, image_bytes, x_label, y_label, labels, data, series_label, insights) -> io.BytesIO:
+    """Export a chart (rendered image + insights + underlying data) as a PDF report."""
+    buffer = io.BytesIO()
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "ChartTitle", parent=styles["Title"], fontSize=16,
+        textColor=colors.HexColor("#1e293b"), spaceAfter=10,
+    )
+    heading_style = ParagraphStyle(
+        "ChartHeading", parent=styles["Heading2"], fontSize=12,
+        textColor=colors.HexColor("#1e293b"), spaceBefore=14, spaceAfter=6,
+    )
+    body_style = ParagraphStyle(
+        "ChartBody", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#334155"), leading=14,
+    )
+
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40,
+    )
+    story = [Paragraph(title, title_style)]
+
+    img_w, img_h = PILImage.open(io.BytesIO(image_bytes)).size
+    max_w = A4[0] - 80
+    display_w = min(max_w, img_w)
+    display_h = display_w * img_h / img_w
+    story.append(RLImage(io.BytesIO(image_bytes), width=display_w, height=display_h))
+
+    if insights:
+        story.append(Paragraph("Key Insights", heading_style))
+        for insight in insights:
+            story.append(Paragraph(f"&bull; {_md_to_reportlab(insight)}", body_style))
+
+    if labels and data:
+        story.append(Paragraph("Chart Data", heading_style))
+        table_data = [[x_label or "Category", series_label or y_label or "Value"]]
+        table_data += [[str(l), _fmt_chart_value(v)] for l, v in zip(labels, data)]
+        tbl = Table(table_data, hAlign="LEFT")
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  colors.HexColor("#3b82f6")),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+            ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ]))
+        story.append(tbl)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+def to_chart_word(title, image_bytes, x_label, y_label, labels, data, series_label, insights) -> io.BytesIO:
+    """Export a chart (rendered image + insights + underlying data) as a Word document."""
+    doc = Document()
+    for section in doc.sections:
+        section.left_margin   = Twips(720)
+        section.right_margin  = Twips(720)
+        section.top_margin    = Twips(720)
+        section.bottom_margin = Twips(720)
+
+    heading = doc.add_heading(title, level=1)
+    heading.runs[0].font.color.rgb = RGBColor(0x1E, 0x29, 0x3B)
+
+    doc.add_picture(io.BytesIO(image_bytes), width=Inches(6.0))
+
+    if insights:
+        doc.add_heading("Key Insights", level=2)
+        for insight in insights:
+            _add_markdown_paragraph(doc, insight)
+
+    if labels and data:
+        doc.add_heading("Chart Data", level=2)
+        tbl = doc.add_table(rows=1, cols=2)
+        tbl.style = "Table Grid"
+        for i, col in enumerate([x_label or "Category", series_label or y_label or "Value"]):
+            cell = tbl.rows[0].cells[i]
+            _set_cell_bg(cell, "3b82f6")
+            run = cell.paragraphs[0].add_run(str(col))
+            run.bold           = True
+            run.font.size      = Pt(9)
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        for r_idx, (label, value) in enumerate(zip(labels, data)):
+            row_cells = tbl.add_row().cells
+            bg = "ffffff" if r_idx % 2 == 0 else "f8fafc"
+            for i, val in enumerate((label, _fmt_chart_value(value))):
+                cell = row_cells[i]
+                _set_cell_bg(cell, bg)
+                run = cell.paragraphs[0].add_run(str(val))
+                run.font.size      = Pt(9)
+                run.font.color.rgb = RGBColor(0x1E, 0x29, 0x3B)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def to_chart_excel(title, image_bytes, x_label, y_label, labels, data, series_label, insights) -> io.BytesIO:
+    """Export a chart (embedded image + underlying data + insights) as an Excel workbook."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Chart"
+    ws["A1"] = title
+    ws["A1"].font = XLFont(size=14, bold=True, color="1E293B")
+
+    xl_img = XLImage(io.BytesIO(image_bytes))
+    xl_img.width, xl_img.height = 640, 380
+    ws.add_image(xl_img, "A3")
+
+    ws_data = wb.create_sheet("Chart Data")
+    if not labels and data and isinstance(data[0], dict) and "x" in data[0] and "y" in data[0]:
+        # Scatter points are {x, y} pairs rather than label/value rows
+        header = [x_label or "X", y_label or "Y"]
+        rows = [[p.get("x"), p.get("y")] for p in data]
+    else:
+        header = [x_label or "Category", series_label or y_label or "Value"]
+        rows = [list(pair) for pair in zip(labels, data)]
+
+    ws_data.append(header)
+    for cell in ws_data[1]:
+        cell.font = XLFont(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="3B82F6")
+    for row in rows:
+        ws_data.append(row)
+    for col_cells in ws_data.columns:
+        width = max((len(str(c.value)) if c.value is not None else 0) for c in col_cells)
+        ws_data.column_dimensions[col_cells[0].column_letter].width = width + 4
+
+    if insights:
+        ws_insights = wb.create_sheet("Insights")
+        ws_insights["A1"] = "Key Insights"
+        ws_insights["A1"].font = XLFont(size=12, bold=True, color="1E293B")
+        for i, insight in enumerate(insights, start=2):
+            ws_insights.cell(row=i, column=1, value=_strip_markdown(insight))
+        ws_insights.column_dimensions["A"].width = 100
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
     buffer.seek(0)
     return buffer

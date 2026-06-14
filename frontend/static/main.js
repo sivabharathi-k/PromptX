@@ -83,7 +83,7 @@ uploadZone.addEventListener('drop', (e) => {
 
 async function doUpload(file) {
   const ext = file.name.split('.').pop().toLowerCase();
-  if (!['csv', 'xlsx', 'xls'].includes(ext)) {
+  if (!['csv', 'xlsx', 'xls', 'tsv', 'txt'].includes(ext)) {
     showUploadError('Only CSV (.csv) and Excel (.xlsx, .xls) files are supported.');
     return;
   }
@@ -161,6 +161,12 @@ function transitionToChat(data) {
   chatScreen.style.display   = 'flex';
   inputBarWrap.classList.add('visible');
   chatInput.focus();
+
+  // On tablet/mobile, the sidebar is an overlay drawer - start collapsed
+  if (window.innerWidth <= 1100 && state.leftSidebarOpen) {
+    state.leftSidebarOpen = false;
+    leftSidebar.classList.add('hidden');
+  }
 }
 
 function populateOverview(data) {
@@ -204,8 +210,17 @@ function populateOverview(data) {
       
       // Health score
       const hs = overview.health_score;
+      const elHealthFill = document.getElementById('sbHealthFill');
+      const elHealthStatus = document.getElementById('sbHealthStatus');
+      const healthWidget = document.getElementById('sbHealthWidget');
+      const statusKey = (hs.status || '').toLowerCase();
       if (elHealth) elHealth.textContent = `${hs.score}`;
-      elHealth.style.setProperty('--health-score', hs.score / 100);
+      if (elHealthFill) elHealthFill.style.width = `${hs.score}%`;
+      if (elHealthStatus) {
+        elHealthStatus.textContent = hs.status;
+        elHealthStatus.className = `metric-health-status status-${statusKey}`;
+      }
+      if (healthWidget) healthWidget.dataset.status = statusKey;
       
       // Update dataset meta if available
       const datasetMeta = document.getElementById('datasetMeta');
@@ -301,9 +316,9 @@ function renderDatasetOverview(overview) {
 
   document.getElementById('overviewSummary').innerHTML = [
     statCard('Total Records', overview.total_records.toLocaleString(), 'ti-list-numbers'),
-    statCard('Total Rows', overview.total_rows.toLocaleString(), 'ti-table-row'),
     statCard('Total Columns', overview.total_columns, 'ti-columns'),
     statCard('Dataset / File Size', overview.dataset_size, 'ti-database'),
+    statCard('Health Score', `${overview.health_score.score} / 100`, 'ti-heartbeat'),
   ].join('');
 
   document.getElementById('overviewTypes').innerHTML = [
@@ -755,12 +770,12 @@ function buildTableBlock(msgId, columns, rows, total, question, showToolbar) {
       <div class="action-toolbar">
         ${showToolbar ? `<button class="toolbar-btn toolbar-btn-primary" onclick="openVizModal('${msgId}')">Visualize</button><div class="toolbar-sep"></div>` : ''}
         <div class="dl-wrap">
-          <button class="toolbar-btn" onclick="toggleDlMenu('${msgId}')">⬇ Export ▾</button>
+          <button class="toolbar-btn" onclick="toggleDlMenu('${msgId}')"><i class="ti ti-download"></i> Export ▾</button>
           <div class="dl-menu" id="dlmenu-${msgId}">
             <button class="dl-opt" onclick="dlFmt('xlsx')">Excel (.xlsx)</button>
-            <button class="dl-opt" onclick="dlFmt('pdf')">📄 PDF (.pdf)</button>
-            <button class="dl-opt" onclick="dlFmt('docx')">📝 Word (.docx)</button>
-            <button class="dl-opt" onclick="dlFmt('png')">🖼 Image (.png)</button>
+            <button class="dl-opt" onclick="dlFmt('pdf')">PDF (.pdf)</button>
+            <button class="dl-opt" onclick="dlFmt('docx')">Word (.docx)</button>
+            <button class="dl-opt" onclick="dlFmt('png')">Image (.png)</button>
           </div>
         </div>
       </div>`;
@@ -774,25 +789,25 @@ function smartRecommend(numCols, catCols, dateCols, question) {
   const recs = [];
 
   if (dateCols.length >= 1 && numCols.length >= 1) {
-    recs.push({ type: 'line',      icon: '📈', label: 'Line Chart' });
-    recs.push({ type: 'area',      icon: '🏔', label: 'Area Chart' });
+    recs.push({ type: 'line',      icon: '', label: 'Line Chart' });
+    recs.push({ type: 'area',      icon: '', label: 'Area Chart' });
   } else if (catCols.length >= 1 && numCols.length >= 1) {
     const uniqueVals = catCols.length; // approximate
     if (/pie|proportion|share|percent|distribution/i.test(q) || catCols.length === 1) {
-      recs.push({ type: 'pie',   icon: '🥧', label: 'Pie Chart' });
-      recs.push({ type: 'donut', icon: '🍩', label: 'Donut Chart' });
-      recs.push({ type: 'bar',   icon: '📊', label: 'Bar Chart' });
+      recs.push({ type: 'pie',   icon: '', label: 'Pie Chart' });
+      recs.push({ type: 'donut', icon: '', label: 'Donut Chart' });
+      recs.push({ type: 'bar',   icon: '', label: 'Bar Chart' });
     } else {
-      recs.push({ type: 'bar',   icon: '📊', label: 'Bar Chart' });
-      recs.push({ type: 'pie',   icon: '🥧', label: 'Pie Chart' });
-      recs.push({ type: 'donut', icon: '🍩', label: 'Donut Chart' });
+      recs.push({ type: 'bar',   icon: '', label: 'Bar Chart' });
+      recs.push({ type: 'pie',   icon: '', label: 'Pie Chart' });
+      recs.push({ type: 'donut', icon: '', label: 'Donut Chart' });
     }
   } else if (numCols.length >= 2) {
-    recs.push({ type: 'scatter',   icon: '⚡', label: 'Scatter Plot' });
-    recs.push({ type: 'histogram', icon: '📉', label: 'Histogram' });
+    recs.push({ type: 'scatter',   icon: '', label: 'Scatter Plot' });
+    recs.push({ type: 'histogram', icon: '', label: 'Histogram' });
   } else if (numCols.length >= 1) {
-    recs.push({ type: 'histogram', icon: '📉', label: 'Histogram' });
-    recs.push({ type: 'bar',       icon: '📊', label: 'Bar Chart' });
+    recs.push({ type: 'histogram', icon: '', label: 'Histogram' });
+    recs.push({ type: 'bar',       icon: '', label: 'Bar Chart' });
   }
 
     // Icons are now rendered as SVG badges elsewhere; keep labels text-only.
@@ -886,7 +901,7 @@ function renderInlineChart(msgId, chartType, btnEl) {
     <div class="inline-chart-panel">
       <div class="inline-chart-header">
         <div class="inline-chart-title">
-          📊 <span>${escHtml(spec.title || chartType + ' Chart')}</span>
+          <span>${escHtml(spec.title || chartType + ' Chart')}</span>
         </div>
         <div class="inline-chart-type-strip">${switcherBtns}</div>
       </div>
@@ -899,7 +914,7 @@ function renderInlineChart(msgId, chartType, btnEl) {
     if (state.chartMap[msgId + '-inline']) {
       state.chartMap[msgId + '-inline'].destroy();
     }
-    state.chartMap[msgId + '-inline'] = _renderChart(cid, spec);
+    state.chartMap[msgId + '-inline'] = renderChart(cid, spec);
   });
 }
 
@@ -921,7 +936,7 @@ function switchInlineChart(msgId, newType, btnEl) {
   if (state.chartMap[msgId + '-inline']) {
     state.chartMap[msgId + '-inline'].destroy();
   }
-  state.chartMap[msgId + '-inline'] = _renderChart(cid, spec);
+  state.chartMap[msgId + '-inline'] = renderChart(cid, spec);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -934,7 +949,7 @@ function openVizModal(msgId) {
   // Handle empty rows (e.g. initial master state)
   if (td.allRows.length === 0 && msgId === 'master') {
     sendMessage('Show top 10 rows');
-    alert('Please wait while I load a data sample for visualization...');
+    showToast('Loading a data sample for visualization...', 'info');
     return;
   }
 
@@ -1039,10 +1054,10 @@ vizGenerateBtn.addEventListener('click', () => {
   if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
 
   vizPreviewEmpty.style.display = 'none';
-  vizPreviewChart.style.display = 'block';
+  vizPreviewChart.style.display = 'flex';
 
   requestAnimationFrame(() => {
-    state.vizModal.chart = _renderChart('vizModalCanvas', spec);
+    state.vizModal.chart = renderChart('vizModalCanvas', spec);
   });
 });
 
@@ -1138,7 +1153,7 @@ function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg, so
     }
   };
 
-  // Sort
+  // ISSUE 3: Sort descending first, then reverse if asc
   let sorted = Object.entries(aggMap).sort((a, b) => getValue(b[1]) - getValue(a[1]));
   if (sortOrder === 'asc') {
     sorted.reverse();
@@ -1148,11 +1163,7 @@ function buildSpecFromDataWithAxes(chartType, columns, rows, xCol, yCol, agg, so
   sorted = sorted.slice(0, topN);
 
   // Truncate long labels
-  const MAX_LABEL_LEN = 30;
-  const labels = sorted.map(e => {
-    const s = String(e[0]);
-    return s.length > MAX_LABEL_LEN ? s.substring(0, MAX_LABEL_LEN - 1) + '…' : s;
-  });
+  const labels = sorted.map(e => String(e[0]));
   const data   = sorted.map(e => +getValue(e[1]).toFixed(2));
 
   return {
@@ -1200,11 +1211,7 @@ function buildSpecFromData(chartType, columns, rows, numCols, catCols) {
 
   // Sort descending and take top 20
   const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]).slice(0, 20);
-  const MAX_LABEL_LEN = 30;
-  const labels = sorted.map(e => {
-    const s = String(e[0]);
-    return s.length > MAX_LABEL_LEN ? s.substring(0, MAX_LABEL_LEN - 1) + '…' : s;
-  });
+  const labels = sorted.map(e => String(e[0]));
   const data = sorted.map(e => e[1]);
 
   return {
@@ -1325,35 +1332,63 @@ async function switchVizType(msgId, newType, btnEl) {
       body:    JSON.stringify(body),
     });
     const data = await res.json();
-    if (!res.ok) { console.error(data.error); return; }
+    if (!res.ok) {
+      console.error(data.error);
+      showToast(data.error || 'Could not switch chart type. Please try again.', 'error');
+      return;
+    }
     renderChartInMsg(msgId, data.spec, 'chart-' + msgId);
   } catch (err) {
     console.error('switchVizType error:', err);
+    showToast('Could not switch chart type. Please check your connection.', 'error');
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   CHART.JS RENDERERS
+   CHART.JS RENDERERS — PROFESSIONAL BI-STYLE
+   ISSUE 1, 7: Comprehensive fix for labels, tooltips, legends
 ════════════════════════════════════════════════════════════════ */
+// Register the Chart.js datalabels plugin globally for bar chart value labels
+Chart.register(ChartDataLabels);
+// Configure defaults for datalabels on bar charts
+Chart.defaults.set('plugins.datalabels', {
+  display: false, // disable globally, enable per-chart
+});
+
 const CHART_COLORS = [
   '#2563EB','#3B82F6','#60A5FA','#F59E0B','#EF4444',
   '#8B5CF6','#EC4899','#14B8A6','#F97316','#6366F1',
   '#0EA5E9','#D946EF','#84CC16','#F43F5E','#06B6D4',
 ];
 
+/** Get theme-aware text/muted colors */
+function getThemeColors() {
+  const isDark = document.body.getAttribute('data-theme') === 'dark';
+  return {
+    text:      isDark ? '#F1F5F9' : '#1E293B',
+    textMid:   isDark ? '#CBD5E1' : '#475569',
+    textMuted: isDark ? '#94A3B8' : '#64748B',
+    grid:      isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    bg:        isDark ? '#0F172A' : '#FFFFFF',
+    cardBg:    'transparent',
+  };
+}
+
 function renderChartInMsg(msgId, spec, canvasId) {
   if (!spec) return;
   const existing = state.chartMap[msgId];
   if (existing) { existing.destroy(); delete state.chartMap[msgId]; }
-  const chart = _renderChart(canvasId, spec);
+  const chart = renderChart(canvasId, spec);
   if (chart) state.chartMap[msgId] = chart;
 }
 
-function _renderChart(canvasId, spec) {
+function renderChart(canvasId, spec, opts = {}) {
   if (!spec) return null;
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
 
+  const compact = !!opts.compact;
+  const colors = getThemeColors();
   const plotType   = (spec.plotType || '').toLowerCase();
   let chartJsType  = 'bar';
   if (plotType === 'line' || plotType === 'area') chartJsType = 'line';
@@ -1364,65 +1399,297 @@ function _renderChart(canvasId, spec) {
   const series  = spec.series && spec.series[0] ? spec.series[0] : null;
   const labels  = series?.labels || spec.labels || [];
   const values  = series?.data   || [];
-
   const isPie  = chartJsType === 'pie' || chartJsType === 'doughnut';
   const isArea = plotType === 'area';
+  const pieLegendPadding = labels.length > 8 ? 24 : 14;
+
+  // Build background colors for pie charts
+  let bgColors = isPie ? CHART_COLORS.slice(0, values.length) : 'rgba(37,99,235,0.18)';
+  let borderColors = isPie ? CHART_COLORS.slice(0, values.length).map(c => c + 'dd') : '#2563EB';
+  
+  // For bar charts, use gradient-like colors
+  if (!isPie && chartJsType !== 'scatter') {
+    // Single color with transparency
+    bgColors = 'rgba(37,99,235,0.18)';
+  }
+
+  // Format large numbers
+  const formatNum = (v) => {
+    if (typeof v !== 'number') return String(v);
+    if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
+    if (Math.abs(v) >= 1_000) return (v / 1_000).toFixed(1) + 'K';
+    return v.toLocaleString();
+  };
 
   const dataset = {
     label:           series?.label || spec.yLabel || 'Data',
     data:            values,
-    backgroundColor: isPie ? CHART_COLORS : 'rgba(37,99,235,0.18)',
-    borderColor:     isPie ? CHART_COLORS.map(c => c + 'cc') : '#2563EB',
-    borderWidth:     2,
-    pointRadius:     chartJsType === 'scatter' ? 4 : 3,
+    backgroundColor: bgColors,
+    borderColor:     borderColors,
+    borderWidth:     isPie ? 2 : 2,
+    pointRadius:     chartJsType === 'scatter' ? 4 : (chartJsType === 'line' ? 3 : 2),
+    pointHoverRadius: chartJsType === 'line' ? 5 : 4,
     fill:            isArea ? true : undefined,
-    tension:         chartJsType === 'line' ? 0.35 : undefined,
+    tension:         chartJsType === 'line' ? 0.3 : undefined,
+    hoverBackgroundColor: isPie ? CHART_COLORS.slice(0, values.length).map(c => c + 'ff') : undefined,
+    offset:          isPie ? labels.map((_, index) => (index % 2 === 0 ? 5 : 2)) : undefined,
   };
 
   const useLabels = !isPie && chartJsType !== 'scatter';
+  
+  // For pie charts with a handful of slices, annotate each slice directly —
+  // with more slices the labels collide, so rely on the legend instead.
+  const pieLabelsPlugin = (isPie && !compact && labels.length <= 8) ? {
+    id: 'pieLabels',
+    afterDraw(chart) {
+      const { ctx, data } = chart;
+      const total = data.datasets[0].data.reduce((a, b) => a + b, 0);
+      if (total === 0) return;
+      
+      chart.getDatasetMeta(0).data.forEach((arc, i) => {
+        const label = data.labels[i];
+        const value = data.datasets[0].data[i];
+        const pct = ((value / total) * 100).toFixed(1);
+        const midAngle = arc.startAngle + (arc.endAngle - arc.startAngle) / 2;
+        
+        // Position label outside the arc
+        const radius = arc.outerRadius * 1.35;
+        const x = Math.cos(midAngle) * radius + arc.x;
+        const y = Math.sin(midAngle) * radius + arc.y;
+        
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // Truncate long labels
+        const displayLabel = label.length > 14 ? label.substring(0, 12) + '…' : label;
+        
+        // Background for readability
+        const textWidth = ctx.measureText(displayLabel).width;
+        const pctWidth = ctx.measureText(`${pct}%`).width;
+        const maxWidth = Math.max(textWidth, pctWidth) + 8;
+        
+        ctx.fillStyle = document.body.getAttribute('data-theme') === 'dark' ? 'rgba(15,23,42,0.90)' : 'rgba(255,255,255,0.92)';
+        ctx.shadowColor = document.body.getAttribute('data-theme') === 'dark' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.1)';
+        ctx.shadowBlur = 4;
+        ctx.fillRect(-maxWidth/2 - 3, -18, maxWidth + 6, 36);
+        ctx.shadowBlur = 0;
+        
+        ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+        ctx.fillStyle = colors.text;
+        ctx.fillText(displayLabel, 0, -5);
+        
+        ctx.font = '10px Inter, system-ui, sans-serif';
+        ctx.fillStyle = colors.textMuted;
+        ctx.fillText(`${formatNum(value)} (${pct}%)`, 0, 10);
+        
+        ctx.restore();
+      });
+    }
+  } : null;
 
   return new Chart(canvas.getContext('2d'), {
     type: chartJsType,
     data: {
-      labels:   useLabels ? labels : undefined,
+      labels:   useLabels ? labels : (isPie ? labels : undefined),
       datasets: [dataset],
     },
+    plugins: pieLabelsPlugin ? [pieLabelsPlugin] : [],
     options: {
       responsive: true,
       maintainAspectRatio: true,
-      animation: { duration: 450 },
-      plugins: {
+      layout: (isPie && !compact) ? { padding: { top: 28, right: 40, bottom: 30, left: 40 } } : {},
+      animation: { duration: compact ? 300 : 500 },
+      ...(chartJsType === 'bar' ? {
+        plugins: {
+          ...(isPie ? {} : {
+            datalabels: {
+              display: values.length <= 20 && !compact,
+              color: colors.text,
+              anchor: 'end',
+              align: 'end',
+              font: { size: 9, weight: '600' },
+              formatter: (v) => formatNum(v),
+            }
+          }),
+          legend: {
+            display: (isPie || chartJsType === 'doughnut') && !compact,
+            position: 'bottom',
+            labels: {
+              boxWidth: 14,
+              padding: pieLegendPadding,
+              font: { size: 11, weight: '500' },
+              color: colors.textMuted,
+              usePointStyle: true,
+            },
+          },
+          title: {
+            display: !!spec.title && !compact,
+            text:    spec.title || '',
+            font:    { size: 14, weight: '700' },
+            color:   colors.text,
+            padding: { bottom: 14, top: 4 },
+          },
+          tooltip: {
+            backgroundColor: document.body.getAttribute('data-theme') === 'dark' ? '#1E293B' : '#FFFFFF',
+            titleColor: colors.text,
+            bodyColor: colors.textMid,
+            borderColor: document.body.getAttribute('data-theme') === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+            borderWidth: 1,
+            padding: 12,
+            cornerRadius: 8,
+            boxPadding: 6,
+            usePointStyle: true,
+            callbacks: {
+              title: function(items) {
+                if (!items.length) return '';
+                return items[0].label || '';
+              },
+              label: function(ctx) {
+                const v = ctx.parsed?.y ?? ctx.parsed?.r ?? ctx.parsed;
+                const label = ctx.dataset.label || '';
+                const formatted = typeof v === 'number' ? formatNum(v) : v;
+                
+                // For pie charts, show percentage
+                if (isPie && ctx.dataset.data) {
+                  const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                  const pct = total > 0 ? ((v / total) * 100).toFixed(1) : 0;
+                  return ` ${label}: ${formatted} (${pct}%)`;
+                }
+                
+                return ` ${label}: ${formatted}`;
+              },
+            },
+          },
+        }
+      } : {
         legend: {
-          display: isPie,
+          display: (isPie || chartJsType === 'doughnut') && !compact,
           position: 'bottom',
-          labels: { boxWidth: 12, font: { size: 11 } },
+          labels: {
+            boxWidth: 14,
+            padding: pieLegendPadding,
+            font: { size: 11, weight: '500' },
+            color: colors.textMuted,
+            usePointStyle: true,
+          },
         },
         title: {
-          display: !!spec.title,
+          display: !!spec.title && !compact,
           text:    spec.title || '',
-          font:    { size: 13, weight: '600' },
-          color:   '#374151',
-          padding: { bottom: 12 },
+          font:    { size: 14, weight: '700' },
+          color:   colors.text,
+          padding: { bottom: 14, top: 4 },
         },
         tooltip: {
+          backgroundColor: document.body.getAttribute('data-theme') === 'dark' ? '#1E293B' : '#FFFFFF',
+          titleColor: colors.text,
+          bodyColor: colors.textMid,
+          borderColor: document.body.getAttribute('data-theme') === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+          borderWidth: 1,
+          padding: 12,
+          cornerRadius: 8,
+          boxPadding: 6,
+          usePointStyle: true,
           callbacks: {
-            label: ctx => {
-              const v = ctx.parsed?.y ?? ctx.parsed;
-              return ` ${ctx.dataset.label}: ${typeof v === 'number' ? v.toLocaleString() : v}`;
-            }
-          }
-        }
-      },
+            title: function(items) {
+              if (!items.length) return '';
+              if (chartJsType === 'scatter') return '';
+              return items[0].label || '';
+            },
+            label: function(ctx) {
+              // Scatter points carry both an X and a Y value — show each on its own line.
+              if (chartJsType === 'scatter') {
+                const px = typeof ctx.parsed?.x === 'number' ? formatNum(ctx.parsed.x) : ctx.parsed?.x;
+                const py = typeof ctx.parsed?.y === 'number' ? formatNum(ctx.parsed.y) : ctx.parsed?.y;
+                return [` ${spec.xLabel || 'X'}: ${px}`, ` ${spec.yLabel || 'Y'}: ${py}`];
+              }
+
+              const v = ctx.parsed?.y ?? ctx.parsed?.r ?? ctx.parsed;
+              const label = ctx.dataset.label || '';
+              const formatted = typeof v === 'number' ? formatNum(v) : v;
+
+              // For pie charts, show percentage
+              if (isPie && ctx.dataset.data) {
+                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                const pct = total > 0 ? ((v / total) * 100).toFixed(1) : 0;
+                return ` ${label}: ${formatted} (${pct}%)`;
+              }
+
+              return ` ${label}: ${formatted}`;
+            },
+          },
+        },
+      }),
       scales: isPie ? {} : {
         x: {
-          ticks: { maxRotation: 35, font: { size: 11 }, color: '#6B7280', maxTicksLimit: 14 },
-          grid:  { color: '#F3F4F6' },
+          ticks: {
+            maxRotation: compact ? 0 : 45,
+            minRotation: 0,
+            font: { size: compact ? 9 : 11, weight: '500' },
+            color: colors.textMuted,
+            maxTicksLimit: compact ? 6 : 25,
+            autoSkip: true,
+            autoSkipPadding: 8,
+            callback: function(value, index) {
+              const label = this.getLabelForValue(value);
+              if (!label) return '';
+              // Truncate long labels but show full on hover via tooltip
+              const maxLen = compact ? 8 : 20;
+              return label.length > maxLen ? label.substring(0, maxLen - 2) + '…' : label;
+            },
+          },
+          grid: {
+            color: colors.grid,
+            drawBorder: false,
+          },
+          title: {
+            display: !!spec.xLabel && !compact,
+            text: spec.xLabel || '',
+            font: { size: 12, weight: '600' },
+            color: colors.textMuted,
+          },
         },
         y: {
-          beginAtZero: true,
-          ticks: { font: { size: 11 }, color: '#6B7280',
-            callback: v => typeof v === 'number' && v >= 1000 ? v.toLocaleString() : v },
-          grid:  { color: '#F3F4F6' },
+          // Plain line charts auto-scale to the data range so trends remain visible;
+          // bar/area/scatter/histogram start at zero so magnitudes stay comparable.
+          beginAtZero: chartJsType !== 'line' || isArea,
+          ticks: {
+            font: { size: compact ? 9 : 11, weight: '500' },
+            color: colors.textMuted,
+            callback: function(v) {
+              return formatNum(v);
+            },
+            maxTicksLimit: compact ? 4 : 8,
+          },
+          grid: {
+            color: colors.grid,
+            drawBorder: false,
+          },
+          title: {
+            display: !!spec.yLabel && !compact,
+            text: spec.yLabel || '',
+            font: { size: 12, weight: '600' },
+            color: colors.textMuted,
+          },
+        },
+      },
+      elements: {
+        bar: {
+          borderRadius: 3,
+          backgroundColor: 'rgba(37,99,235,0.75)',
+          hoverBackgroundColor: '#2563EB',
+        },
+        line: {
+          borderColor: '#2563EB',
+          backgroundColor: 'rgba(37,99,235,0.08)',
+        },
+        point: {
+          backgroundColor: '#2563EB',
+          borderColor: '#FFFFFF',
+          borderWidth: 1.5,
+          hoverRadius: 6,
         },
       },
     },
@@ -1481,6 +1748,47 @@ function iconNo(){
   </svg>`;
 }
 
+function iconInfo(){
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <path d="M12 16v-4"/>
+    <path d="M12 8h.01"/>
+  </svg>`;
+}
+
+/**
+ * Shows a dismissible toast notification in the bottom-right corner.
+ * type: 'info' | 'success' | 'error' | 'warning'
+ * duration: ms before auto-dismiss, or 0 to require manual dismissal.
+ */
+function showToast(message, type = 'info', duration = 4500) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const icons = { success: iconCheck(), error: iconNo(), warning: iconWarn(), info: iconInfo() };
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || icons.info}</span>
+    <span class="toast-message">${escHtml(message)}</span>
+    <button class="toast-close" type="button" aria-label="Dismiss notification">${iconX()}</button>
+  `;
+
+  const dismiss = () => {
+    if (!toast.isConnected) return;
+    toast.classList.add('toast-exit');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  };
+
+  toast.querySelector('.toast-close').addEventListener('click', dismiss);
+  container.appendChild(toast);
+
+  if (duration > 0) {
+    setTimeout(dismiss, duration);
+  }
+}
+
 function _chartIconSvg(type){
   const map = {
     bar: 'M4 20V10h4v10H4z M10 20V4h4v16h-4z M16 20v-7h4v7h-4z',
@@ -1501,12 +1809,57 @@ function _chartLabel(t) {
   return labels[t] || t;
 }
 
+/** Which Custom Chart Builder controls apply to each chart type. */
+const CHART_CONTROL_APPLICABILITY = {
+  bar:       { aggregation: true,  sortOrder: true,  topN: true },
+  pie:       { aggregation: true,  sortOrder: true,  topN: true },
+  donut:     { aggregation: true,  sortOrder: true,  topN: true },
+  line:      { aggregation: true,  sortOrder: false, topN: false },
+  area:      { aggregation: true,  sortOrder: false, topN: false },
+  scatter:   { aggregation: false, sortOrder: false, topN: false },
+  histogram: { aggregation: false, sortOrder: false, topN: false },
+};
+
+/**
+ * Enable/disable the Aggregation, Sort Order and Top N controls based on the
+ * selected chart type, and explain why via an inline note — so the UI never
+ * shows a control that silently has no effect on the generated chart.
+ */
+function updateCustomControlAvailability(chartType) {
+  const rules = CHART_CONTROL_APPLICABILITY[chartType] || CHART_CONTROL_APPLICABILITY.bar;
+
+  const aggRow = document.getElementById('customAggRow');
+  const sortOrder = document.getElementById('customSortOrder');
+  const topN = document.getElementById('customTopN');
+  const note = document.getElementById('customControlsNote');
+
+  if (aggRow) {
+    aggRow.classList.toggle('is-disabled', !rules.aggregation);
+    aggRow.querySelectorAll('.viz-agg-btn').forEach(b => { b.disabled = !rules.aggregation; });
+  }
+  if (sortOrder) sortOrder.disabled = !rules.sortOrder;
+  if (topN) topN.disabled = !rules.topN;
+
+  if (note) {
+    const disabledNames = [];
+    if (!rules.aggregation) disabledNames.push('Aggregation');
+    if (!rules.sortOrder) disabledNames.push('Sort Order');
+    if (!rules.topN) disabledNames.push('Top N');
+    if (disabledNames.length) {
+      note.textContent = `${disabledNames.join(', ')} ${disabledNames.length > 1 ? "don't" : "doesn't"} apply to ${_chartLabel(chartType)} charts — the full dataset is shown.`;
+      note.style.display = 'block';
+    } else {
+      note.style.display = 'none';
+    }
+  }
+}
+
 function escHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"');
 }
 
 function scrollToBottom() {
@@ -1605,9 +1958,9 @@ function renderColumnProfile(colProfile) {
   if (!el) return;
   const { numeric, date, categorical } = colProfile;
   let html = '<div class="viz-col-profile-bar">';
-  if (numeric.length) html += `<span class="viz-col-pill viz-col-num">📊 ${numeric.length} Numeric</span>`;
-  if (date.length) html += `<span class="viz-col-pill viz-col-date">📅 ${date.length} Date</span>`;
-  if (categorical.length) html += `<span class="viz-col-pill viz-col-cat">🏷 ${categorical.length} Categorical</span>`;
+  if (numeric.length) html += `<span class="viz-col-pill viz-col-num">${numeric.length} Numeric</span>`;
+  if (date.length) html += `<span class="viz-col-pill viz-col-date">${date.length} Date</span>`;
+  if (categorical.length) html += `<span class="viz-col-pill viz-col-cat">${categorical.length} Categorical</span>`;
   html += '</div>';
   if (numeric.length) html += `<div class="viz-col-names">Numeric: ${numeric.join(', ')}</div>`;
   if (date.length) html += `<div class="viz-col-names">Date: ${date.join(', ')}</div>`;
@@ -1628,6 +1981,16 @@ function renderAutoVizCards(recommendations) {
     const chartType = rec.chart_type;
     const chartLabel = _chartLabel(chartType);
     const confidence = rec.confidence_score;
+    const isPie = chartType === 'pie' || chartType === 'donut';
+    const pieSeries = rec.spec?.series?.[0];
+    const pieLegend = isPie && pieSeries?.labels && pieSeries?.data
+      ? pieSeries.labels.map((label, i) => {
+          const value = pieSeries.data[i];
+          const total = pieSeries.data.reduce((sum, item) => sum + item, 0);
+          const pct = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+          return { label, value, pct };
+        }).slice(0, 6)
+      : [];
 
     // Build mini chart placeholder
     const canvasId = `auto-viz-canvas-${idx}`;
@@ -1652,18 +2015,31 @@ function renderAutoVizCards(recommendations) {
         </div>
       </div>
       <div class="auto-viz-card-body">
-        <div class="auto-viz-chart-mini">
-          <canvas id="${canvasId}"></canvas>
+        <div class="auto-viz-chart-shell ${isPie ? 'is-pie' : ''}">
+          <div class="auto-viz-chart-mini">
+            <canvas id="${canvasId}"></canvas>
+          </div>
+          ${isPie ? `
+            <div class="auto-viz-legend-panel">
+              ${pieLegend.map(item => `
+                <div class="auto-viz-legend-row">
+                  <span class="auto-viz-legend-label" title="${escHtml(item.label)}">${escHtml(item.label)}</span>
+                  <span class="auto-viz-legend-value">${escHtml(String(item.value))}</span>
+                  <span class="auto-viz-legend-pct">${item.pct}%</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
         </div>
         <div class="auto-viz-card-meta">
-          <span>X: <strong>${escHtml(rec.x_column || '—')}</strong></span>
-          <span>Y: <strong>${escHtml(rec.y_column || '—')}</strong></span>
+          <span><strong>X</strong> ${escHtml(rec.x_column || '—')}</span>
+          <span><strong>Y</strong> ${escHtml(rec.y_column || '—')}</span>
         </div>
         ${insightsHtml}
       </div>
       <div class="auto-viz-card-actions">
-        <button class="toolbar-btn" onclick="expandAutoVizChart(${idx})">🔍 Expand</button>
-        <button class="toolbar-btn" onclick="exportAutoVizChart(${idx}, 'png')">🖼 PNG</button>
+        <button class="toolbar-btn" onclick="expandAutoVizChart(${idx})"><i class="ti ti-maximize"></i> Expand</button>
+        <button class="toolbar-btn" onclick="exportAutoVizChart(${idx}, 'png')"><i class="ti ti-photo"></i> PNG</button>
       </div>
     `;
     grid.appendChild(card);
@@ -1685,76 +2061,100 @@ function renderAutoVizMiniChart(canvasId, spec) {
     delete _autoVizCharts[canvasId];
   }
 
-  const chart = _renderChart(canvasId, spec);
+  const chart = renderChart(canvasId, spec, { compact: true });
   if (chart) _autoVizCharts[canvasId] = chart;
 }
 
+/**
+ * "Expand" on an Auto Visualization card opens the full Custom Chart Builder,
+ * pre-populated with this recommendation's chart type and axes — giving the
+ * user the complete experience (insights panel + PNG/PDF/Excel/Word export)
+ * instead of a bare read-only preview.
+ */
 function expandAutoVizChart(idx) {
   if (!_autoVizData || !_autoVizData.recommendations[idx]) return;
   const rec = _autoVizData.recommendations[idx];
-  // Open the existing viz modal with this spec
-  openVizModalWithSpec(rec);
+  openCustomChartFromRecommendation(rec);
 }
 
-function openVizModalWithSpec(rec) {
-  // Set the chart type in the modal
-  const grid = document.getElementById('vizChartTypeGrid');
-  if (grid) {
-    grid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
+function openCustomChartFromRecommendation(rec) {
+  showCustomChartBuilder();
+
+  // Chart type
+  const typeGrid = document.getElementById('customChartTypeGrid');
+  if (typeGrid && rec.chart_type) {
+    typeGrid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.type === rec.chart_type);
     });
   }
 
-  // Set axes
-  const xAxis = document.getElementById('vizXAxis');
-  const yAxis = document.getElementById('vizYAxis');
+  // Axes — override the auto-selected defaults with the recommendation's columns.
+  // If the recommendation has no Y column (e.g. histogram, frequency charts),
+  // keep the sensible default already chosen by populateCustomAxisDropdowns().
+  const xAxis = document.getElementById('customXAxis');
+  const yAxis = document.getElementById('customYAxis');
   if (xAxis && rec.x_column) xAxis.value = rec.x_column;
   if (yAxis && rec.y_column) yAxis.value = rec.y_column;
 
-  // Show preview
-  const empty = document.getElementById('vizPreviewEmpty');
-  const chart = document.getElementById('vizPreviewChart');
-  if (empty) empty.style.display = 'none';
-  if (chart) chart.style.display = 'block';
-
-  // Destroy previous modal chart
-  if (state.vizModal.chart) {
-    state.vizModal.chart.destroy();
-    state.vizModal.chart = null;
+  // Sensible defaults for aggregation, sort order and Top N
+  const aggRow = document.getElementById('customAggRow');
+  if (aggRow) {
+    aggRow.querySelectorAll('.viz-agg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.agg === 'sum');
+    });
   }
+  document.getElementById('customSortOrder').value = 'desc';
+  document.getElementById('customTopN').value = 20;
 
-  // Render
-  requestAnimationFrame(() => {
-    state.vizModal.chart = _renderChart('vizModalCanvas', rec.spec);
-  });
-
-  // Show modal
-  document.getElementById('vizModal').style.display = 'flex';
-  document.body.style.overflow = 'hidden';
+  checkCustomValidation();
+  customGenerateChart();
 }
 
-function generateAllAutoVizCharts() {
-  if (!_autoVizData || !_autoVizData.recommendations) return;
-  // Open each recommendation in sequence
-  _autoVizData.recommendations.forEach((rec, idx) => {
-    setTimeout(() => expandAutoVizChart(idx), idx * 200);
-  });
-}
-
-function exportAutoVizChart(idx, fmt) {
-  // For auto-viz, we need to get the chart data and export via the existing service
+/**
+ * Export an Auto Visualization card's chart in the given format.
+ * The card preview renders a compact, label-free chart to fit the small card —
+ * for export, a full-quality chart (title, axis labels, legend) is rendered
+ * off-screen and used as the source image instead.
+ */
+async function exportAutoVizChart(idx, fmt) {
   if (!_autoVizData || !_autoVizData.recommendations[idx]) return;
   const rec = _autoVizData.recommendations[idx];
-  // Store the chart data in session and redirect
-  alert(`Export as ${fmt.toUpperCase()} — reusing existing export infrastructure.`);
-  window.location.href = `/download/${fmt}`;
+
+  const tempWrap = document.createElement('div');
+  tempWrap.style.position = 'fixed';
+  tempWrap.style.left = '-9999px';
+  tempWrap.style.top = '0';
+  tempWrap.style.width = '800px';
+  tempWrap.style.height = '450px';
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.id = `auto-viz-export-${idx}-${Date.now()}`;
+  tempWrap.appendChild(tempCanvas);
+  document.body.appendChild(tempWrap);
+
+  const tempChart = renderChart(tempCanvas.id, rec.spec);
+  if (!tempChart) {
+    tempWrap.remove();
+    return;
+  }
+
+  // Wait for the off-screen chart to finish its render pass before capturing it.
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+  try {
+    await downloadChartExport(fmt, tempChart, rec.spec, rec.insights || [], _chartFileSlug(rec.spec?.title));
+  } finally {
+    tempChart.destroy();
+    tempWrap.remove();
+  }
 }
 
 
 /* ═══════════════════════════════════════════════════════════════
-   CUSTOM CHART BUILDER
+   CUSTOM CHART BUILDER — PROFESSIONAL BI-STYLE
+   ISSUES 2, 3, 4, 5, 7
 ════════════════════════════════════════════════════════════════ */
 let _customChartInstance = null;
+let _customChartState = null; // { spec, insights } for the currently rendered chart
 
 function showCustomChartBuilder() {
   if (!state.uploaded) return;
@@ -1772,8 +2172,8 @@ function showCustomChartBuilder() {
   populateCustomAxisDropdowns();
   // Reset preview
   resetCustomChartPreview();
-  // Reset warning
-  document.getElementById('customChartWarning').style.display = 'none';
+  // Reset warning + sync control availability with the active chart type
+  checkCustomValidation();
 }
 
 function closeCustomChartBuilder() {
@@ -1817,12 +2217,12 @@ function resetCustomChartPreview() {
     _customChartInstance.destroy();
     _customChartInstance = null;
   }
+  _customChartState = null;
 }
 
 function resetCustomChartBuilder() {
   populateCustomAxisDropdowns();
   resetCustomChartPreview();
-  document.getElementById('customChartWarning').style.display = 'none';
   // Reset chart type to bar
   const grid = document.getElementById('customChartTypeGrid');
   if (grid) {
@@ -1839,9 +2239,10 @@ function resetCustomChartBuilder() {
   }
   document.getElementById('customSortOrder').value = 'desc';
   document.getElementById('customTopN').value = 20;
+  checkCustomValidation();
 }
 
-/* ── Chart Validation Rules ────────────────────────────────── */
+/* ── ISSUE 4: Chart Validation Rules (Professional BI-style) ── */
 function validateChartConfiguration(chartType, xCol, yCol) {
   if (!xCol && !yCol) {
     return { valid: false, suggestion: null, message: 'Please select at least one axis column.' };
@@ -1857,58 +2258,88 @@ function validateChartConfiguration(chartType, xCol, yCol) {
   const yIsCat = yCol ? catCols.includes(yCol) : false;
   const yIsDate = yCol ? dateCols.includes(yCol) : false;
 
-  // Validation rules
+  // ISSUE 4: Professional validation rules with friendly messages
   if (chartType === 'scatter') {
     if (!yIsNum || !xIsNum) {
-      return {
-        valid: false,
-        suggestion: 'bar',
-        message: `Scatter Plot requires two numeric columns. Try Bar Chart instead.`
-      };
+      let suggestion = 'bar';
+      let message = 'Scatter Plot requires two numeric columns. ';
+      if (xIsCat && yIsNum) {
+        suggestion = 'bar';
+        message += 'Since your X-axis is categorical, try a **Bar Chart** instead to compare values across categories.';
+      } else if (xIsDate && yIsNum) {
+        suggestion = 'line';
+        message += 'Since your X-axis is a date, try a **Line Chart** instead to show trends over time.';
+      } else {
+        message += 'Try **Bar Chart** instead for mixed data types.';
+      }
+      return { valid: false, suggestion, message };
     }
   }
 
   if (chartType === 'pie' || chartType === 'donut') {
     if (!xIsCat) {
-      return {
-        valid: false,
-        suggestion: 'bar',
-        message: `Pie Chart requires a categorical X-axis. Try Bar Chart instead.`
-      };
+      let message = 'Pie Chart requires a categorical X-axis (text labels). ';
+      if (xIsDate) {
+        message += 'Try **Bar Chart** instead to show date-based distribution.';
+      } else {
+        message += 'Try **Bar Chart** instead.';
+      }
+      return { valid: false, suggestion: 'bar', message };
+    }
+    if (yCol && !yIsNum) {
+      return { valid: false, suggestion: 'bar', message: 'Pie Chart requires a numeric Y-axis. Try **Bar Chart** instead.' };
     }
   }
 
   if (chartType === 'histogram') {
     if (!yIsNum && !xIsNum) {
-      return {
-        valid: false,
-        suggestion: 'bar',
-        message: `Histogram requires a numeric column. Try Bar Chart instead.`
-      };
+      let message = 'Histogram requires a numeric column. ';
+      if (xIsCat && yIsNum) {
+        message += 'Since you have a categorical X-axis and numeric Y-axis, try **Bar Chart** instead.';
+      } else {
+        message += 'Try **Bar Chart** instead.';
+      }
+      return { valid: false, suggestion: 'bar', message };
     }
   }
 
   if (chartType === 'line' || chartType === 'area') {
     if (!xIsDate && !xIsNum) {
-      return {
-        valid: false,
-        suggestion: 'bar',
-        message: `Line Chart works best with a Date or Numeric X-axis. Try Bar Chart instead.`
-      };
+      let message = 'Line Chart works best with a Date or Numeric X-axis. ';
+      if (xIsCat && yIsNum) {
+        message += 'Since your X-axis is categorical, try **Bar Chart** for clearer comparison.';
+      } else {
+        message += 'Try **Bar Chart** instead.';
+      }
+      return { valid: false, suggestion: 'bar', message };
     }
     if (!yIsNum) {
-      return {
-        valid: false,
-        suggestion: 'bar',
-        message: `Line Chart requires a numeric Y-axis. Try Bar Chart instead.`
-      };
+      return { valid: false, suggestion: 'bar', message: 'Line Chart requires a numeric Y-axis. Try **Bar Chart** instead.' };
     }
   }
 
   return { valid: true, suggestion: null, message: '' };
 }
 
-/* ── Generate Custom Chart ─────────────────────────────────── */
+/* ── ISSUE 4: Get chart type suggestion based on column types ── */
+function getSuggestedChartType(xCol, yCol) {
+  const allColumns = state.dataset.columns || [];
+  const { numCols, catCols, dateCols } = classifyColumnsFromSchema(allColumns);
+  
+  const xIsNum = numCols.includes(xCol);
+  const xIsCat = catCols.includes(xCol);
+  const xIsDate = dateCols.includes(xCol);
+  const yIsNum = yCol ? numCols.includes(yCol) : false;
+
+  if (xIsCat && yIsNum) return 'bar';
+  if (xIsDate && yIsNum) return 'line';
+  if (xIsNum && yIsNum) return 'scatter';
+  if (xIsNum && !yCol) return 'histogram';
+  if (xIsCat && !yCol) return 'pie';
+  return 'bar';
+}
+
+/* ── Generate Custom Chart (Backend-Powered) ───────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   const generateBtn = document.getElementById('customGenerateBtn');
   if (generateBtn) generateBtn.addEventListener('click', customGenerateChart);
@@ -1929,59 +2360,197 @@ document.addEventListener('DOMContentLoaded', () => {
   // Axis change validation
   const cx = document.getElementById('customXAxis');
   const cy = document.getElementById('customYAxis');
-  if (cx) cx.addEventListener('change', checkCustomValidation);
-  if (cy) cy.addEventListener('change', checkCustomValidation);
+  if (cx) cx.addEventListener('change', function() {
+    // ISSUE 4: Auto-suggest chart type when axis changes
+    const suggestedType = getSuggestedChartType(this.value, cy ? cy.value : '');
+    const typeGrid = document.getElementById('customChartTypeGrid');
+    if (typeGrid && suggestedType) {
+      typeGrid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.type === suggestedType);
+      });
+    }
+    checkCustomValidation();
+  });
+  if (cy) cy.addEventListener('change', function() {
+    const suggestedType = getSuggestedChartType(cx ? cx.value : '', this.value);
+    const typeGrid = document.getElementById('customChartTypeGrid');
+    if (typeGrid && suggestedType) {
+      typeGrid.querySelectorAll('.viz-chart-type-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.type === suggestedType);
+      });
+    }
+    checkCustomValidation();
+  });
+  
+  // Top N change validation
+  const topNInput = document.getElementById('customTopN');
+  if (topNInput) {
+    topNInput.addEventListener('change', function() {
+      validateTopNInput(this);
+      checkCustomValidation();
+    });
+  }
+
+  // Sort order change
+  const sortOrder = document.getElementById('customSortOrder');
+  if (sortOrder) {
+    sortOrder.addEventListener('change', checkCustomValidation);
+  }
 });
+
+/** ISSUE 2: Validate the Top N input field with proper capping */
+function validateTopNInput(input) {
+  let val = parseInt(input.value, 10);
+  const validValues = [5, 10, 20, 50, 100];
+  
+  // Handle NaN
+  if (isNaN(val) || val < 1) {
+    val = 10;
+  }
+  
+  // Find nearest valid value
+  const nearest = validValues.reduce((prev, curr) => 
+    Math.abs(curr - val) < Math.abs(prev - val) ? curr : prev
+  );
+  
+  // ISSUE 2: Cap at dataset row count
+  const maxRows = state.dataset.rows || 1000;
+  const capped = Math.min(nearest, maxRows);
+  
+  if (val !== capped || !validValues.includes(val)) {
+    input.value = capped;
+    // Show brief validation message
+    const warning = document.getElementById('customChartWarning');
+    if (val !== capped) {
+      if (capped < val && val !== capped) {
+        warning.innerHTML = `Capped to ${capped} (dataset has ${maxRows.toLocaleString()} rows)`;
+      } else {
+        warning.innerHTML = `Adjusted to nearest valid value: Top ${capped}`;
+      }
+      warning.style.display = 'block';
+      setTimeout(() => {
+        if (warning.innerHTML.startsWith('Capped') || warning.innerHTML.startsWith('Adjusted')) {
+          warning.style.display = 'none';
+        }
+      }, 3000);
+    }
+  }
+}
 
 function checkCustomValidation() {
   const chartType = document.getElementById('customChartTypeGrid')?.querySelector('.viz-chart-type-btn.active')?.dataset.type || 'bar';
   const xCol = document.getElementById('customXAxis')?.value || '';
   const yCol = document.getElementById('customYAxis')?.value || '';
-  const result = validateChartConfiguration(chartType, xCol, yCol);
   const warning = document.getElementById('customChartWarning');
+
+  updateCustomControlAvailability(chartType);
+
+  // Hard validation errors — incompatible chart type / axis combination
+  const result = validateChartConfiguration(chartType, xCol, yCol);
   if (!result.valid) {
-    warning.innerHTML = `⚠️ ${escHtml(result.message)}`;
+    warning.innerHTML = parseMarkdown(result.message);
+    warning.className = 'custom-chart-warning';
     warning.style.display = 'block';
-  } else {
-    warning.style.display = 'none';
+    return;
   }
+
+  // Soft notice — Pie/Donut charts cap at 20 categories for readability
+  if (chartType === 'pie' || chartType === 'donut') {
+    const topN = parseInt(document.getElementById('customTopN')?.value || '20', 10);
+    if (topN > 20) {
+      warning.innerHTML = parseMarkdown(`Pie and Donut charts display up to **20** categories for readability. Showing the top 20 of your requested ${topN}.`);
+      warning.className = 'custom-chart-warning info';
+      warning.style.display = 'block';
+      return;
+    }
+  }
+
+  warning.className = 'custom-chart-warning';
+  warning.style.display = 'none';
 }
 
-function customGenerateChart() {
+async function customGenerateChart() {
   const chartType = document.getElementById('customChartTypeGrid')?.querySelector('.viz-chart-type-btn.active')?.dataset.type || 'bar';
   const xCol = document.getElementById('customXAxis')?.value || '';
   const yCol = document.getElementById('customYAxis')?.value || '';
   const agg = document.getElementById('customAggRow')?.querySelector('.viz-agg-btn.active')?.dataset.agg || 'sum';
   const sortOrder = document.getElementById('customSortOrder')?.value || 'desc';
-  const topN = parseInt(document.getElementById('customTopN')?.value || '20', 10);
+  let topN = parseInt(document.getElementById('customTopN')?.value || '20', 10);
 
   // Validate
   const validation = validateChartConfiguration(chartType, xCol, yCol);
   if (!validation.valid) {
-    // Auto-suggest a valid chart
     const warning = document.getElementById('customChartWarning');
-    warning.innerHTML = `⚠️ ${escHtml(validation.message)}`;
+    warning.innerHTML = parseMarkdown(validation.message);
+    warning.className = 'custom-chart-warning';
     warning.style.display = 'block';
     return;
   }
 
-  const warning = document.getElementById('customChartWarning');
-  warning.style.display = 'none';
+  // ISSUE 2: Validate Top N - properly cap and validate
+  const validTopN = [5, 10, 20, 50, 100];
+  if (isNaN(topN) || topN < 1) topN = 10;
+  const nearest = validTopN.reduce((prev, curr) =>
+    Math.abs(curr - topN) < Math.abs(prev - topN) ? curr : prev
+  );
+  topN = Math.min(nearest, state.dataset.rows || 1000);
+  document.getElementById('customTopN').value = topN;
 
-  // Get data from the master table data
-  const td = state.tableData['master'];
-  if (!td) {
-    alert('No dataset loaded. Please upload a dataset first.');
-    return;
+  // Refresh the inline notice (e.g. Pie/Donut Top-N cap) for the normalized value
+  checkCustomValidation();
+
+  // Show loading state on button
+  const generateBtn = document.getElementById('customGenerateBtn');
+  const originalText = generateBtn.innerHTML;
+  generateBtn.innerHTML = '<i class="ti ti-spinner"></i> Generating...';
+  generateBtn.disabled = true;
+
+  try {
+    // Fetch spec from backend (uses full dataset, correct pipeline)
+    const result = await fetchCustomChartSpec(chartType, xCol, yCol, agg, sortOrder, topN);
+    
+    if (!result) {
+      // Fallback to local spec building using preview rows
+      console.warn('Backend custom render failed, falling back to local rendering');
+      const td = state.tableData['master'];
+      if (!td) {
+        showToast('No dataset loaded. Please upload a dataset first.', 'warning');
+        return;
+      }
+      showToast('Could not reach the server for this chart — showing a quick local preview instead.', 'warning');
+      const spec = buildCustomSpec(chartType, td.columns, td.allRows, xCol, yCol, agg, sortOrder, topN);
+      renderCustomChart(spec, []);
+      renderCustomChartInsights(spec, chartType, xCol, yCol);
+    } else {
+      // Render using backend spec + professional insights
+      renderCustomChart(result.spec, result.insights || []);
+    }
+  } catch (err) {
+    console.error('Chart generation failed:', err);
+    // Final fallback
+    const td = state.tableData['master'];
+    if (td) {
+      showToast('Could not reach the server for this chart — showing a quick local preview instead.', 'warning');
+      const spec = buildCustomSpec(chartType, td.columns, td.allRows, xCol, yCol, agg, sortOrder, topN);
+      renderCustomChart(spec, []);
+      renderCustomChartInsights(spec, chartType, xCol, yCol);
+    } else {
+      showToast('Chart generation failed. Please try again.', 'error');
+    }
+  } finally {
+    generateBtn.innerHTML = originalText;
+    generateBtn.disabled = false;
   }
+}
 
-  // Build spec from data
-  const spec = buildCustomSpec(chartType, td.columns, td.allRows, xCol, yCol, agg, sortOrder, topN);
-
+/** Render the chart and professional insights */
+function renderCustomChart(spec, insights) {
   if (_customChartInstance) {
     _customChartInstance.destroy();
     _customChartInstance = null;
   }
+
+  _customChartState = { spec, insights: insights || [] };
 
   // Show chart
   const empty = document.getElementById('customChartEmpty');
@@ -1989,12 +2558,21 @@ function customGenerateChart() {
   if (empty) empty.style.display = 'none';
   if (canvas) {
     requestAnimationFrame(() => {
-      _customChartInstance = _renderChart('customChartCanvas', spec);
+      _customChartInstance = renderChart('customChartCanvas', spec);
     });
   }
 
-  // Generate and show insights
-  renderCustomChartInsights(spec, chartType, xCol, yCol);
+  // Show professional insights
+  const panel = document.getElementById('customChartInsights');
+  const body = document.getElementById('customChartInsightsBody');
+  if (panel && body) {
+    if (insights && insights.length > 0) {
+      body.innerHTML = insights.map(i => `<div class="chart-insight-item">${parseMarkdown(i)}</div>`).join('');
+      panel.style.display = 'block';
+    } else {
+      panel.style.display = 'none';
+    }
+  }
 }
 
 function buildCustomSpec(chartType, columns, rows, xCol, yCol, agg, sortOrder, topN) {
@@ -2044,6 +2622,7 @@ function buildCustomSpec(chartType, columns, rows, xCol, yCol, agg, sortOrder, t
     }
   };
 
+  // ISSUE 3: Sort descending first, then reverse if asc
   let sorted = Object.entries(aggMap).sort((a, b) => getValue(b[1]) - getValue(a[1]));
   if (sortOrder === 'asc') sorted.reverse();
   sorted = sorted.slice(0, topN);
@@ -2083,30 +2662,119 @@ function renderCustomChartInsights(spec, chartType, xCol, yCol) {
       const maxLabel = labels[maxIdx] || '—';
       const minLabel = labels[minIdx] || '—';
 
-      insights.push(`🏆 **Highest:** ${maxLabel} (${maxVal.toLocaleString()})`);
-      insights.push(`📉 **Lowest:** ${minLabel} (${minVal.toLocaleString()})`);
-      insights.push(`📊 **Average:** ${avgVal.toLocaleString(undefined, {maximumFractionDigits: 2})}`);
-      insights.push(`📋 **Total:** ${sumVal.toLocaleString()} across ${data.length} categories`);
+      insights.push(`Highest: ${maxLabel} (${maxVal.toLocaleString()})`);
+      insights.push(`Lowest: ${minLabel} (${minVal.toLocaleString()})`);
+      insights.push(`Average: ${avgVal.toLocaleString(undefined, {maximumFractionDigits: 2})}`);
+      insights.push(`Total: ${sumVal.toLocaleString()} across ${data.length} categories`);
     }
   }
 
   if (chartType === 'line' || chartType === 'area') {
-    insights.push(`📈 **Trend view:** ${xCol} over time showing ${yCol} patterns`);
+    insights.push(`Trend view: ${xCol} over time showing ${yCol} patterns`);
   } else if (chartType === 'scatter') {
-    insights.push(`🔗 **Correlation view:** Relationship between ${xCol} and ${yCol}`);
+    insights.push(`Correlation view: Relationship between ${xCol} and ${yCol}`);
   } else if (chartType === 'pie') {
-    insights.push(`🥧 **Proportion view:** Relative share of each ${xCol} category`);
+    insights.push(`Proportion view: Relative share of each ${xCol} category`);
   } else if (chartType === 'histogram') {
-    insights.push(`📊 **Distribution:** Spread of ${yCol || xCol} values`);
+    insights.push(`Distribution: Spread of ${yCol || xCol} values`);
   }
 
   body.innerHTML = insights.map(i => `<div class="chart-insight-item">${parseMarkdown(i)}</div>`).join('');
   panel.style.display = 'block';
 }
 
-function exportCustomChart(fmt) {
-  // Reuse existing export infrastructure
-  window.location.href = `/download/${fmt}`;
+/** Build a safe filename slug from a chart title. */
+function _chartFileSlug(text) {
+  const slug = String(text || 'chart')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'chart';
+}
+
+/** Trigger a browser download for a data: or blob: URL. */
+function downloadDataUrl(url, filename) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+/**
+ * Export a rendered Chart.js instance.
+ * PNG is generated entirely client-side from the canvas (always accurate).
+ * PDF/DOCX/XLSX are built server-side from the chart image + data + insights.
+ */
+async function downloadChartExport(fmt, chartInstance, spec, insights, filenameBase) {
+  if (!chartInstance) {
+    showToast('Generate a chart first, then export it.', 'warning');
+    return;
+  }
+
+  const image = chartInstance.toBase64Image('image/png', 1.0);
+
+  if (fmt === 'png') {
+    downloadDataUrl(image, `${filenameBase}.png`);
+    showToast(`${filenameBase}.png downloaded.`, 'success');
+    return;
+  }
+
+  const series = (spec.series && spec.series[0]) || {};
+  try {
+    const res = await fetch(`/visualize/export-chart/${fmt}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: spec.title || 'Chart',
+        x_label: spec.xLabel || '',
+        y_label: spec.yLabel || '',
+        series_label: series.label || spec.yLabel || 'Value',
+        labels: series.labels || spec.labels || [],
+        data: series.data || [],
+        insights: insights || [],
+        image,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Export failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    downloadDataUrl(url, `${filenameBase}.${fmt}`);
+    URL.revokeObjectURL(url);
+    showToast(`${filenameBase}.${fmt} downloaded.`, 'success');
+  } catch (err) {
+    console.error('Chart export failed:', err);
+    showToast(err.message || 'Chart export failed. Please try again.', 'error');
+  }
+}
+
+async function exportCustomChart(fmt, btn) {
+  if (!_customChartInstance || !_customChartState) {
+    showToast('Generate a chart first, then export it.', 'warning');
+    return;
+  }
+  const { spec, insights } = _customChartState;
+
+  // PNG is generated client-side and downloads instantly; PDF/Excel/Word
+  // require a server round-trip, so show a brief loading state on the button.
+  if (btn && fmt !== 'png') {
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="ti ti-spinner"></i> Exporting...';
+    try {
+      await downloadChartExport(fmt, _customChartInstance, spec, insights, _chartFileSlug(spec.title));
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+    return;
+  }
+
+  downloadChartExport(fmt, _customChartInstance, spec, insights, _chartFileSlug(spec.title));
 }
 
 
@@ -2116,9 +2784,9 @@ function exportCustomChart(fmt) {
 function parseMarkdown(md) {
   if (!md) return '';
   let html = md
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>');
 
   html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
   html = html.replace(/^## (.*$)/gim,  '<h2>$1</h2>');

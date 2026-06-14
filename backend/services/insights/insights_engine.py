@@ -3,18 +3,18 @@ Enterprise AI Insights Engine — generates comprehensive 12-section analysis
 for any tabular dataset uploaded to the platform.
 
 Output Format:
-  📊 Dataset Overview
-  🔍 Data Quality Assessment
-  📈 Statistical Summary
-  ⚠️ Outlier Analysis
-  🔗 Correlation Insights
-  📉 Trend Analysis
-  📂 Category Analysis
-  🏆 Performance Analysis
-  🚨 Anomaly Detection
-  💡 Key Business Insights
-  ✅ Recommendations
-  📋 Executive Summary
+    Dataset Overview
+    Data Quality Assessment
+    Statistical Summary
+    Outlier Analysis
+    Correlation Insights
+    Trend Analysis
+    Category Analysis
+    Performance Analysis
+    Anomaly Detection
+    Key Business Insights
+    Recommendations
+    Executive Summary
 """
 
 from __future__ import annotations
@@ -1228,7 +1228,7 @@ def _compute_executive_summary(df: pd.DataFrame, col_info: dict, primary_metric:
     high_anom = len([a for a in anomalies if a["severity"] == "HIGH"])
     total_risk = high_out + high_anom
     if total_risk > 0:
-        points.append(f"⚠️ **Risks**: {total_risk} high-severity issues detected ({high_out} outlier patterns + {high_anom} anomalies) requiring investigation.")
+        points.append(f"Risks: {total_risk} high-severity issues detected ({high_out} outlier patterns + {high_anom} anomalies) requiring investigation.")
     elif outliers:
         points.append(f"**Risks**: {len(outliers)} outlier patterns detected (low-to-medium severity).")
 

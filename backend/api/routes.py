@@ -2,6 +2,7 @@
 API routes — all HTTP endpoints registered on a Flask Blueprint.
 """
 
+import base64
 import io
 import json
 import logging
@@ -12,7 +13,9 @@ from flask import Blueprint, jsonify, request, send_file, session
 from groq import Groq
 
 from backend.config.settings import GROQ_API_KEY, GROQ_MODEL
-from backend.services.export_service import to_excel, to_image, to_pdf, to_word
+from backend.services.export_service import (
+    to_chart_excel, to_chart_pdf, to_chart_word, to_excel, to_image, to_pdf, to_word,
+)
 from backend.services.query_service import execute_sql, generate_sql
 from backend.services.visualization_profile_service import VisualizationProfileService
 from backend.services.chart_recommendation_service import ChartRecommendationService
@@ -26,6 +29,7 @@ from backend.utils.active_dataset_store import (
     load_dataframe_into_active_db, get_active_schema, active_dataset_exists, get_active_connection,
     get_master_schema, get_master_schema_formatted
 )
+from backend.utils.dataset_cache import get_active_dataframe_and_profile, get_cached_recommendations
 from backend.services.insert_service import insert_rows
 from backend.services.update_service import update_rows
 from backend.services.delete_service import preview_delete as preview_delete_service, delete_rows as delete_rows_service
@@ -195,7 +199,7 @@ def generate_schema_description() -> str:
         cols = cur.execute("PRAGMA table_info(dataset)").fetchall()
         total_rows = cur.execute("SELECT COUNT(*) FROM dataset").fetchone()[0]
 
-        md = "### 📊 Dataset Schema Summary\n"
+        md = "### Dataset Schema Summary\n"
         md += f"- **Total Columns**: {len(cols)}\n"
         md += f"- **Total Rows**: {total_rows}\n\n"
         md += "| Column Name | SQLite Data Type | Sample Values (up to 3) |\n"
@@ -237,7 +241,7 @@ def generate_data_quality_report() -> str:
                 "total_missing": nulls + blanks
             })
 
-        md = "## 🔍 Data Quality & Health Report\n\n"
+        md = "## Data Quality & Health Report\n\n"
         md += f"- **Total Rows**: {total_rows}\n"
         md += f"- **Duplicate Records (Groups)**: {dupes_count} row groups are duplicated.\n\n"
 
@@ -342,7 +346,7 @@ def execute_confirmed_operation(op_type: str, question: str) -> tuple:
         preview = get_active_dataset_preview()
         return jsonify({
             "type": "edit",
-            "message": f"✅ {msg} (Undo ID: {snapshot_id})",
+            "message": f"Success: {msg} (Undo ID: {snapshot_id})",
             "columns": preview["columns"],
             "rows": preview["rows"],
             "total": preview["total"]
@@ -591,7 +595,7 @@ def query():
                     session.modified = True
                     return jsonify({
                         "type": "delete_confirm",
-                        "message": f"⚠️ This operation will delete **{affected_rows}** rows. Type **CONFIRM** to proceed.",
+                        "message": f"Warning: This operation will delete **{affected_rows}** rows. Type **CONFIRM** to proceed.",
                         "requires_confirm": True
                     })
 
@@ -604,7 +608,7 @@ def query():
                     session.modified = True
                     return jsonify({
                         "type": "delete_confirm",
-                        "message": f"⚠️ This operation will drop column **'{col_name}'**. Type **CONFIRM** to proceed.",
+                        "message": f"Warning: This operation will drop column **'{col_name}'**. Type **CONFIRM** to proceed.",
                         "requires_confirm": True
                     })
 
@@ -652,7 +656,7 @@ def query():
                 preview = get_active_dataset_preview()
                 return jsonify({
                     "type": "edit",
-                    "message": f"✅ {msg} (Undo ID: {snapshot_id})",
+                    "message": f"Success: {msg} (Undo ID: {snapshot_id})",
                     "columns": preview["columns"],
                     "rows": preview["rows"],
                     "total": preview["total"]
@@ -808,140 +812,142 @@ def visualize_auto_recommendations():
         return jsonify({"error": "No active dataset."}), 400
 
     try:
-        conn = get_active_connection()
-        try:
-            df = pd.read_sql("SELECT * FROM dataset", conn)
-        finally:
-            conn.close()
+        df, profile = get_active_dataframe_and_profile()
 
         if df.empty:
             return jsonify({"error": "Dataset is empty."}), 400
 
-        profile_service = VisualizationProfileService()
-        prep_service = VisualizationPreparationService()
-        recommender = ChartRecommender()
-
-        profile = profile_service.profile(df)
-        cols = profile.get("columns", {})
-
-        # Classify columns
-        numeric_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "numeric"]
-        date_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "date"]
-        categorical_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "categorical"]
-
-        # Build candidate column-pair combinations
-        candidates = []
-
-        # Date + Numeric → Line/Area
-        for dc in date_cols[:2]:
-            for nc in numeric_cols[:3]:
-                candidates.append({"chart_types": ["line", "area"], "x": dc, "y": nc, "reason": "Time series trend analysis"})
-                candidates.append({"chart_types": ["area"], "x": dc, "y": nc, "reason": "Cumulative trend over time"})
-
-        # Category + Numeric → Bar/Pie/Donut
-        for cc in categorical_cols[:5]:
-            for nc in numeric_cols[:3]:
-                n_unique = cols.get(cc, {}).get("unique_count", 999)
-                if n_unique <= 8:
-                    candidates.append({"chart_types": ["pie", "donut", "bar"], "x": cc, "y": nc, "reason": f"Distribution breakdown by {cc}"})
-                candidates.append({"chart_types": ["bar"], "x": cc, "y": nc, "reason": f"Compare {nc} across {cc} categories"})
-                candidates.append({"chart_types": ["bar"], "x": cc, "y": nc, "reason": f"Top categories by {nc}"})
-
-        # Numeric + Numeric → Scatter
-        for i, nc1 in enumerate(numeric_cols[:4]):
-            for nc2 in numeric_cols[i+1:4]:
-                candidates.append({"chart_types": ["scatter"], "x": nc1, "y": nc2, "reason": f"Correlation between {nc1} and {nc2}"})
-                candidates.append({"chart_types": ["scatter"], "x": nc2, "y": nc1, "reason": f"Inverse correlation check"})
-
-        # Single Numeric → Histogram
-        for nc in numeric_cols[:3]:
-            candidates.append({"chart_types": ["histogram"], "x": nc, "y": None, "reason": f"Distribution of {nc} values"})
-
-        # Category only → Frequency counts
-        for cc in categorical_cols[:3]:
-            candidates.append({"chart_types": ["bar"], "x": cc, "y": None, "reason": f"Frequency count by {cc}"})
-            n_unique = cols.get(cc, {}).get("unique_count", 999)
-            if n_unique <= 8:
-                candidates.append({"chart_types": ["pie"], "x": cc, "y": None, "reason": f"Proportion breakdown by {cc}"})
-
-        # Score and rank candidates
-        scored = []
-        for cand in candidates:
-            chart_type = cand["chart_types"][0]
-            x_col = cand["x"]
-            y_col = cand["y"]
-
-            # Compute confidence score based on column type compatibility
-            x_kind = cols.get(x_col, {}).get("kind", "unknown") if x_col else None
-            y_kind = cols.get(y_col, {}).get("kind", "unknown") if y_col else None
-
-            score = 0
-            # Date+Numeric = high confidence for time series
-            if x_kind == "date" and y_kind == "numeric" and chart_type in ("line", "area"):
-                score = 95 if chart_type == "line" else 85
-            # Category+Numeric = high confidence for bar
-            elif x_kind == "categorical" and y_kind == "numeric" and chart_type == "bar":
-                n_unique = cols.get(x_col, {}).get("unique_count", 999)
-                if n_unique > 20:
-                    score = 80
-                else:
-                    score = 90
-            # Pie for small cardinality categories
-            elif x_kind == "categorical" and chart_type in ("pie", "donut"):
-                n_unique = cols.get(x_col, {}).get("unique_count", 999)
-                if n_unique <= 8:
-                    score = 88
-                else:
-                    score = 60  # penalize pie for many categories
-            # Two numerics for scatter
-            elif x_kind == "numeric" and y_kind == "numeric" and chart_type == "scatter":
-                score = 85
-            # Single numeric histogram
-            elif chart_type == "histogram" and (x_kind == "numeric" or y_kind == "numeric"):
-                score = 82
-            else:
-                score = 70  # default
-
-            try:
-                spec = prep_service.render_with_axes(
-                    df=df, chart_type=chart_type, profile=profile,
-                    x_column=x_col, y_column=y_col
-                )
-            except Exception:
-                continue  # skip invalid combinations
-
-            # Generate insights for this chart
-            chart_insights = _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols)
-
-            candidate_name = cand["reason"]
-            scored.append({
-                "chart_type": chart_type,
-                "x_column": x_col,
-                "y_column": y_col,
-                "reason": candidate_name,
-                "confidence_score": score,
-                "spec": spec,
-                "insights": chart_insights,
-            })
-
-        # Sort by confidence score descending, take top 10
-        scored.sort(key=lambda r: r["confidence_score"], reverse=True)
-        top_recommendations = scored[:10]
-
-        return jsonify({
-            "success": True,
-            "recommendations": top_recommendations,
-            "total_candidates": len(candidates),
-            "columns_profile": {
-                "numeric": numeric_cols,
-                "date": date_cols,
-                "categorical": categorical_cols,
-            }
-        })
+        payload = get_cached_recommendations(lambda: _build_auto_recommendations(df, profile))
+        return jsonify(payload)
 
     except Exception as e:
         logger.exception("Auto-recommendations failed: %s", str(e))
         return jsonify({"error": f"Auto-recommendations failed: {str(e)}"}), 500
+
+
+def _build_auto_recommendations(df, profile):
+    """Compute the full auto-recommendations payload (ranked chart specs,
+    insights and column profile) for the active dataset. Pure function of
+    (df, profile) so its result can be cached by `get_cached_recommendations`."""
+    prep_service = VisualizationPreparationService()
+    recommender = ChartRecommender()
+
+    cols = profile.get("columns", {})
+
+    # Classify columns
+    numeric_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "numeric"]
+    date_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "date"]
+    categorical_cols = [c for c in df.columns if cols.get(c, {}).get("kind") == "categorical"]
+
+    # Build candidate column-pair combinations
+    candidates = []
+
+    # Date + Numeric → Line/Area
+    for dc in date_cols[:2]:
+        for nc in numeric_cols[:3]:
+            candidates.append({"chart_types": ["line", "area"], "x": dc, "y": nc, "reason": "Time series trend analysis"})
+            candidates.append({"chart_types": ["area"], "x": dc, "y": nc, "reason": "Cumulative trend over time"})
+
+    # Category + Numeric → Bar/Pie/Donut
+    for cc in categorical_cols[:5]:
+        for nc in numeric_cols[:3]:
+            n_unique = cols.get(cc, {}).get("unique_count", 999)
+            if n_unique <= 8:
+                candidates.append({"chart_types": ["pie", "donut", "bar"], "x": cc, "y": nc, "reason": f"Distribution breakdown by {cc}"})
+            candidates.append({"chart_types": ["bar"], "x": cc, "y": nc, "reason": f"Compare {nc} across {cc} categories"})
+            candidates.append({"chart_types": ["bar"], "x": cc, "y": nc, "reason": f"Top categories by {nc}"})
+
+    # Numeric + Numeric → Scatter
+    for i, nc1 in enumerate(numeric_cols[:4]):
+        for nc2 in numeric_cols[i+1:4]:
+            candidates.append({"chart_types": ["scatter"], "x": nc1, "y": nc2, "reason": f"Correlation between {nc1} and {nc2}"})
+            candidates.append({"chart_types": ["scatter"], "x": nc2, "y": nc1, "reason": f"Inverse correlation check"})
+
+    # Single Numeric → Histogram
+    for nc in numeric_cols[:3]:
+        candidates.append({"chart_types": ["histogram"], "x": nc, "y": None, "reason": f"Distribution of {nc} values"})
+
+    # Category only → Frequency counts
+    for cc in categorical_cols[:3]:
+        candidates.append({"chart_types": ["bar"], "x": cc, "y": None, "reason": f"Frequency count by {cc}"})
+        n_unique = cols.get(cc, {}).get("unique_count", 999)
+        if n_unique <= 8:
+            candidates.append({"chart_types": ["pie"], "x": cc, "y": None, "reason": f"Proportion breakdown by {cc}"})
+
+    # Score and rank candidates
+    scored = []
+    for cand in candidates:
+        chart_type = cand["chart_types"][0]
+        x_col = cand["x"]
+        y_col = cand["y"]
+
+        # Compute confidence score based on column type compatibility
+        x_kind = cols.get(x_col, {}).get("kind", "unknown") if x_col else None
+        y_kind = cols.get(y_col, {}).get("kind", "unknown") if y_col else None
+
+        score = 0
+        # Date+Numeric = high confidence for time series
+        if x_kind == "date" and y_kind == "numeric" and chart_type in ("line", "area"):
+            score = 95 if chart_type == "line" else 85
+        # Category+Numeric = high confidence for bar
+        elif x_kind == "categorical" and y_kind == "numeric" and chart_type == "bar":
+            n_unique = cols.get(x_col, {}).get("unique_count", 999)
+            if n_unique > 20:
+                score = 80
+            else:
+                score = 90
+        # Pie for small cardinality categories
+        elif x_kind == "categorical" and chart_type in ("pie", "donut"):
+            n_unique = cols.get(x_col, {}).get("unique_count", 999)
+            if n_unique <= 8:
+                score = 88
+            else:
+                score = 60  # penalize pie for many categories
+        # Two numerics for scatter
+        elif x_kind == "numeric" and y_kind == "numeric" and chart_type == "scatter":
+            score = 85
+        # Single numeric histogram
+        elif chart_type == "histogram" and (x_kind == "numeric" or y_kind == "numeric"):
+            score = 82
+        else:
+            score = 70  # default
+
+        try:
+            spec = prep_service.render_with_axes(
+                df=df, chart_type=chart_type, profile=profile,
+                x_column=x_col, y_column=y_col
+            )
+        except Exception:
+            continue  # skip invalid combinations
+
+        # Generate insights for this chart
+        chart_insights = _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols)
+
+        candidate_name = cand["reason"]
+        scored.append({
+            "chart_type": chart_type,
+            "x_column": x_col,
+            "y_column": y_col,
+            "reason": candidate_name,
+            "confidence_score": score,
+            "spec": spec,
+            "insights": chart_insights,
+        })
+
+    # Sort by confidence score descending, take top 10
+    scored.sort(key=lambda r: r["confidence_score"], reverse=True)
+    top_recommendations = scored[:10]
+
+    return {
+        "success": True,
+        "recommendations": top_recommendations,
+        "total_candidates": len(candidates),
+        "columns_profile": {
+            "numeric": numeric_cols,
+            "date": date_cols,
+            "categorical": categorical_cols,
+        }
+    }
 
 
 def _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols):
@@ -949,25 +955,29 @@ def _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols):
     insights = []
     try:
         if x_col and x_col in df.columns:
-            # Top value
-            if y_col and y_col in df.columns:
+            # Top/bottom/average by category — only meaningful when x_col groups
+            # rows into categories (not for scatter, where x_col is continuous)
+            if y_col and y_col in df.columns and chart_type != "scatter":
                 try:
-                    agg = df.groupby(x_col)[y_col].sum().sort_values(ascending=False)
+                    valid = df[[x_col, y_col]].copy()
+                    valid[y_col] = pd.to_numeric(valid[y_col], errors="coerce")
+                    valid = valid.dropna(subset=[y_col])
+                    agg = valid.groupby(x_col)[y_col].sum().sort_values(ascending=False)
                     if not agg.empty:
                         top_label = str(agg.index[0])
                         top_val = float(agg.iloc[0])
                         total_val = float(agg.sum())
                         pct = round(100 * top_val / total_val, 1) if total_val else 0
-                        insights.append(f"🏆 **Highest {y_col}:** {top_label} ({top_val:,.2f}, {pct}% of total)")
-                        
+                        insights.append(f"Highest {y_col}: {top_label} ({top_val:,.2f}, {pct}% of total)")
+
                         # Lowest
                         bottom_label = str(agg.index[-1])
                         bottom_val = float(agg.iloc[-1])
-                        insights.append(f"📉 **Lowest {y_col}:** {bottom_label} ({bottom_val:,.2f})")
+                        insights.append(f"Lowest {y_col}: {bottom_label} ({bottom_val:,.2f})")
 
                         # Average
                         avg_val = float(agg.mean())
-                        insights.append(f"📊 **Average {y_col}:** {avg_val:,.2f} across {len(agg)} categories")
+                        insights.append(f"Average {y_col}: {avg_val:,.2f} across {len(agg)} categories")
                 except Exception:
                     pass
 
@@ -976,7 +986,34 @@ def _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols):
                 try:
                     s = pd.to_numeric(df[y_col], errors="coerce").dropna()
                     if not s.empty:
-                        insights.append(f"📈 **{y_col} range:** {s.min():,.2f} to {s.max():,.2f} (mean: {s.mean():,.2f})")
+                        insights.append(f"{y_col} range: {s.min():,.2f} to {s.max():,.2f} (mean: {s.mean():,.2f})")
+                except Exception:
+                    pass
+
+            # X-axis range — useful for scatter/histogram where x_col is continuous
+            if chart_type in ("scatter", "histogram"):
+                try:
+                    sx = pd.to_numeric(df[x_col], errors="coerce").dropna()
+                    if not sx.empty:
+                        insights.append(f"{x_col} range: {sx.min():,.2f} to {sx.max():,.2f} (mean: {sx.mean():,.2f})")
+                except Exception:
+                    pass
+
+            # Frequency breakdown for count-based bar/pie/donut charts (no numeric y)
+            if not y_col and chart_type in ("bar", "pie", "donut"):
+                try:
+                    counts = df[x_col].value_counts()
+                    if not counts.empty:
+                        total = int(counts.sum())
+                        top_label = str(counts.index[0])
+                        top_count = int(counts.iloc[0])
+                        pct = round(100 * top_count / total, 1) if total else 0
+                        insights.append(f"Most common {x_col}: {top_label} ({top_count:,} records, {pct}% of total)")
+                        if len(counts) > 1:
+                            bottom_label = str(counts.index[-1])
+                            bottom_count = int(counts.iloc[-1])
+                            insights.append(f"Least common {x_col}: {bottom_label} ({bottom_count:,} records)")
+                        insights.append(f"{x_col} has {len(counts):,} unique categories")
                 except Exception:
                     pass
 
@@ -990,11 +1027,11 @@ def _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols):
                     first_half = tmp[y_col].iloc[:len(tmp)//2].mean()
                     second_half = tmp[y_col].iloc[len(tmp)//2:].mean()
                     if second_half > first_half * 1.05:
-                        insights.append(f"📈 **Trend:** Upward trend detected — values increased over time")
+                        insights.append(f"Trend: Upward trend detected — values increased over time")
                     elif first_half > second_half * 1.05:
-                        insights.append(f"📉 **Trend:** Downward trend detected — values decreased over time")
+                        insights.append(f"Trend: Downward trend detected — values decreased over time")
                     else:
-                        insights.append(f"➡️ **Trend:** Relatively stable over time")
+                        insights.append(f"Trend: Relatively stable over time")
             except Exception:
                 pass
 
@@ -1006,7 +1043,7 @@ def _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols):
                     corr = tmp[x_col].corr(tmp[y_col])
                     direction = "positive" if corr > 0 else "negative"
                     strength = "strong" if abs(corr) > 0.7 else "moderate" if abs(corr) > 0.3 else "weak"
-                    insights.append(f"🔗 **Correlation:** {strength.capitalize()} {direction} correlation (r={corr:.2f}) between {x_col} and {y_col}")
+                    insights.append(f"Correlation: {strength.capitalize()} {direction} correlation (r={corr:.2f}) between {x_col} and {y_col}")
             except Exception:
                 pass
 
@@ -1018,12 +1055,12 @@ def _generate_chart_insights(df, chart_type, x_col, y_col, numeric_cols):
                     s = pd.to_numeric(df[col], errors="coerce").dropna()
                     if not s.empty:
                         skew = "right-skewed" if s.mean() > s.median() else "left-skewed" if s.mean() < s.median() else "symmetric"
-                        insights.append(f"📊 **Distribution:** {skew.capitalize()} — most values {'below' if skew == 'right-skewed' else 'above'} the mean ({s.mean():,.2f})")
+                        insights.append(f"Distribution: {skew.capitalize()} — most values {'below' if skew == 'right-skewed' else 'above'} the mean ({s.mean():,.2f})")
                 except Exception:
                     pass
 
         # Dataset size
-        insights.append(f"📋 Based on {len(df):,} data points")
+        insights.append(f"Based on {len(df):,} data points")
 
     except Exception:
         pass
@@ -1122,6 +1159,8 @@ def visualize_render():
 def visualize_custom_render():
     """Render a chart spec from the full dataset with full aggregation/sort/Top-N pipeline.
 
+    Pipeline: Aggregate → Sort → Apply Top-N → Render
+
     Request body:
         chart_type: str (bar, line, area, pie, donut, scatter, histogram)
         xColumn: str
@@ -1130,7 +1169,7 @@ def visualize_custom_render():
         sortOrder: str (asc, desc)
         topN: int (5, 10, 20, 50, 100)
 
-    Returns full spec + insights.
+    Returns full spec + professional insights.
     """
     if not active_dataset_exists():
         return jsonify({"error": "No active dataset."}), 400
@@ -1143,25 +1182,25 @@ def visualize_custom_render():
     sort_order = body.get("sortOrder", "desc")
     top_n = body.get("topN", 20)
 
-    # Validate topN
+    # Valid Top N values
     valid_top_n = [5, 10, 20, 50, 100]
-    if top_n not in valid_top_n:
-        # Clamp to nearest valid value
-        top_n = min(valid_top_n, key=lambda v: abs(v - top_n))
 
     try:
-        conn = get_active_connection()
-        try:
-            df = pd.read_sql("SELECT * FROM dataset", conn)
-        finally:
-            conn.close()
+        df, profile = get_active_dataframe_and_profile()
 
         if df.empty:
             return jsonify({"error": "Dataset is empty."}), 400
 
-        profile_service = VisualizationProfileService()
+        # ISSUE 2: Proper Top N validation - cap at dataset size
+        dataset_rows = len(df)
+        # Find nearest valid top_n value
+        if top_n not in valid_top_n:
+            top_n = min(valid_top_n, key=lambda v: abs(v - top_n))
+        # Cap at dataset row count (if dataset is smaller than requested top_n)
+        if top_n > dataset_rows:
+            top_n = dataset_rows
+
         prep_service = VisualizationPreparationService()
-        profile = profile_service.profile(df)
 
         # Validate x_column and y_column exist
         cols = list(df.columns)
@@ -1170,13 +1209,14 @@ def visualize_custom_render():
         if y_column and y_column not in cols:
             y_column = None
 
+        # ISSUE 3: Build spec with correct pipeline: Aggregate → Sort → Top-N → Render
         spec = prep_service.render_with_axes(
             df=df, chart_type=chart_type, profile=profile,
             x_column=x_column, y_column=y_column,
             aggregation=aggregation, sort_order=sort_order, top_n=top_n,
         )
 
-        # Generate comprehensive insights
+        # ISSUE 6: Generate comprehensive professional insights
         recommender = ChartRecommender()
         numeric_cols = [c for c in df.columns if profile.get("columns", {}).get(c, {}).get("kind") == "numeric"]
         categorical_cols = [c for c in df.columns if profile.get("columns", {}).get(c, {}).get("kind") == "categorical"]
@@ -1187,15 +1227,186 @@ def visualize_custom_render():
             numeric_cols, categorical_cols, date_cols, len(df),
         )
 
+        # Add professional insight sections
+        professional_insights = _build_professional_insights(
+            spec, df, chart_type, x_column, y_column, aggregation, top_n, dataset_rows
+        )
+
         return jsonify({
             "spec": spec,
-            "insights": insights,
+            "insights": professional_insights,
             "columns": cols,
             "total": len(df),
         })
     except Exception as e:
         logger.exception("Custom render failed: %s", str(e))
         return jsonify({"error": f"Custom render failed: {str(e)}"}), 500
+
+
+def _build_professional_insights(spec, df, chart_type, x_col, y_col, agg, top_n, total_rows):
+    """Build professional-grade chart insights with summary, trends, and recommendations."""
+    insights = []
+    try:
+        data_values = []
+        labels = []
+        if spec.get("series") and spec["series"][0]:
+            data_values = spec["series"][0].get("data", [])
+            labels = spec["series"][0].get("labels", spec.get("labels", []))
+
+        if not data_values:
+            return ["Chart Summary: No data available for analysis."]
+
+        # Scatter points are {x, y} dicts, not plain numeric values — handle separately
+        if chart_type == "scatter":
+            return _build_scatter_insights(data_values, x_col, y_col, total_rows)
+
+        values = [float(v) for v in data_values if v is not None]
+        if not values:
+            return ["Chart Summary: No numeric values to analyze."]
+
+        max_val = max(values)
+        min_val = min(values)
+        sum_val = sum(values)
+        avg_val = sum_val / len(values)
+
+        max_idx = values.index(max_val)
+        min_idx = values.index(min_val)
+        max_label = labels[max_idx] if max_idx < len(labels) else "—"
+        min_label = labels[min_idx] if min_idx < len(labels) else "—"
+
+        # 1. Summary
+        chart_labels = {"bar": "Bar Chart", "line": "Line Chart", "area": "Area Chart",
+                       "pie": "Pie Chart", "donut": "Donut Chart", "scatter": "Scatter Plot",
+                       "histogram": "Histogram"}
+        chart_name = chart_labels.get(chart_type, chart_type.upper())
+        insights.append(f"Summary: {chart_name} showing {agg.upper()}({y_col or 'Count'}) by {x_col}. "
+                       f"Analyzing {len(values):,} data points from {total_rows:,} total rows.")
+
+        # 2. Highest / Lowest — skip when every category has the same value,
+        # since "highest" and "lowest" would otherwise point at the same bar.
+        if max_val == min_val and len(values) >= 2:
+            insights.append(f"Distribution: All {len(values)} categories have the same value "
+                           f"({_fmt_value(max_val)})")
+        else:
+            if max_label and max_val > 0:
+                if sum_val > 0:
+                    pct = round(100 * max_val / sum_val, 1)
+                    insights.append(f"Highest: {max_label} with {_fmt_value(max_val)} ({pct}% of total)")
+                else:
+                    insights.append(f"Highest: {max_label} ({_fmt_value(max_val)})")
+
+            if min_label:
+                insights.append(f"Lowest: {min_label} ({_fmt_value(min_val)})")
+
+        # 4. Trend / Concentration
+        if chart_type in ("bar", "pie") and sum_val > 0 and len(values) >= 3:
+            # Top 3 concentration
+            sorted_vals = sorted(values, reverse=True)
+            top3_sum = sum(sorted_vals[:3])
+            top3_pct = round(100 * top3_sum / sum_val, 1)
+            others_pct = round(100 - top3_pct, 1)
+            insights.append(f"Concentration: Top 3 categories contribute **{top3_pct}%** "
+                           f"of total (others: {others_pct}%)")
+            # Variance observation
+            if max_val > 0 and min_val > 0:
+                ratio = round(max_val / min_val, 1) if min_val > 0 else float('inf')
+                if ratio > 10:
+                    insights.append(f"Variance: Large variance detected — highest is {ratio}x the lowest")
+
+        # 5. Trend for line/area
+        if chart_type in ("line", "area") and len(values) >= 3:
+            first_half = sum(values[:len(values)//2]) / max(len(values[:len(values)//2]), 1)
+            second_half = sum(values[len(values)//2:]) / max(len(values[len(values)//2:]), 1)
+            if second_half > first_half * 1.05:
+                change = round(100 * (second_half - first_half) / max(first_half, 0.001), 1)
+                insights.append(f"Trend: Upward trend — values increased by ~{change}%")
+            elif first_half > second_half * 1.05:
+                change = round(100 * (first_half - second_half) / max(first_half, 0.001), 1)
+                insights.append(f"Trend: Downward trend — values decreased by ~{change}%")
+            else:
+                insights.append(f"Trend: Relatively stable over the period")
+
+        # 6. Average
+        insights.append(f"Average: {_fmt_value(avg_val)} across {len(values)} categories")
+
+        # 7. Total
+        insights.append(f"Total: {_fmt_value(sum_val)}")
+
+        # 8. Notable observation
+        if chart_type == "pie" and len(values) >= 3:
+            top_pct = round(100 * max_val / sum_val, 1)
+            if top_pct > 50:
+                insights.append(f"Dominance: '{max_label}' alone accounts for {top_pct}% — "
+                               f"consider a Bar Chart for better comparison")
+            elif top_pct < 10 and len(values) > 5:
+                insights.append(f"Distribution: Values are relatively evenly distributed")
+
+        if chart_type == "histogram":
+            skew = "right-skewed" if avg_val > (min_val + max_val) / 2 else "left-skewed" if avg_val < (min_val + max_val) / 2 else "symmetric"
+            insights.append(f"Distribution Shape: {skew.capitalize()} distribution detected")
+
+        # 9. Recommendation
+        if chart_type == "pie" and len(labels) > 8:
+            insights.append(f"Recommendation: Pie chart has {len(labels)} slices — consider Bar Chart for clarity")
+        elif chart_type == "bar" and len(labels) > 25:
+            insights.append(f"Recommendation: {len(labels)} bars may be crowded — increase Top N filter or consider a different chart type")
+        elif chart_type == "line" and x_col:
+            insights.append(f"Recommendation: Use this trend to identify seasonal patterns or anomalies in {x_col}")
+        elif chart_type == "histogram":
+            insights.append(f"Recommendation: Check for outliers beyond the main distribution range")
+        else:
+            insights.append(f"Recommendation: Use filters and Top N to focus on the most impactful categories")
+
+        return insights[:10]
+
+    except Exception:
+        return ["Chart Summary: Analysis completed on the selected data."]
+
+
+def _build_scatter_insights(points, x_col, y_col, total_rows):
+    """Build insights for scatter plots, whose data points are {x, y} dicts."""
+    try:
+        xs = [float(p["x"]) for p in points if p and p.get("x") is not None and p.get("y") is not None]
+        ys = [float(p["y"]) for p in points if p and p.get("x") is not None and p.get("y") is not None]
+        if not xs:
+            return ["Chart Summary: No numeric values to analyze."]
+
+        insights = [
+            f"Summary: Scatter Plot showing {y_col} vs {x_col}. "
+            f"Analyzing {len(xs):,} data points from {total_rows:,} total rows.",
+            f"{x_col} range: {_fmt_value(min(xs))} to {_fmt_value(max(xs))} "
+            f"(mean: {_fmt_value(sum(xs) / len(xs))})",
+            f"{y_col} range: {_fmt_value(min(ys))} to {_fmt_value(max(ys))} "
+            f"(mean: {_fmt_value(sum(ys) / len(ys))})",
+        ]
+
+        if len(xs) >= 5:
+            corr = pd.Series(xs).corr(pd.Series(ys))
+            if pd.notna(corr):
+                direction = "positive" if corr > 0 else "negative"
+                strength = "strong" if abs(corr) > 0.7 else "moderate" if abs(corr) > 0.3 else "weak"
+                insights.append(f"Correlation: {strength.capitalize()} {direction} correlation "
+                                f"(r={corr:.2f}) between {x_col} and {y_col}")
+
+        insights.append("Recommendation: Add a trend line to quantify the correlation strength")
+        return insights[:10]
+    except Exception:
+        return ["Chart Summary: Analysis completed on the selected data."]
+
+
+def _fmt_value(v):
+    """Format values for display in insights."""
+    try:
+        fv = float(v)
+        if abs(fv) >= 1_000_000:
+            return f"{fv / 1_000_000:.2f}M"
+        if abs(fv) >= 1_000:
+            return f"{fv / 1_000:.1f}K"
+        if fv == int(fv):
+            return f"{int(fv):,}"
+        return f"{fv:.2f}"
+    except:
+        return str(v)
 
 
 @api.route("/download-excel", methods=["GET"])
@@ -1208,6 +1419,58 @@ def download_excel():
 def download(fmt: str):
     """Export the last query result in the requested format."""
     return _download(fmt)
+
+
+_CHART_EXPORT_FORMATS = {
+    "pdf":  ("chart.pdf",  "application/pdf"),
+    "docx": ("chart.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    "xlsx": ("chart.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+}
+
+
+@api.route("/visualize/export-chart/<fmt>", methods=["POST"])
+def export_chart(fmt: str):
+    """Export a rendered chart (image + insights + underlying data) as PDF, Word or Excel.
+
+    PNG export is handled entirely client-side via the Chart.js canvas, so it
+    does not hit this endpoint.
+    """
+    fmt = fmt.lower()
+    if fmt not in _CHART_EXPORT_FORMATS:
+        return jsonify({"error": f"Unsupported chart export format '{fmt}'. Choose: pdf, docx, xlsx."}), 400
+
+    body = request.get_json(silent=True) or {}
+    title        = (body.get("title") or "Chart").strip()
+    x_label      = body.get("x_label") or ""
+    y_label      = body.get("y_label") or ""
+    series_label = body.get("series_label") or ""
+    labels       = body.get("labels") or []
+    data         = body.get("data") or []
+    insights     = body.get("insights") or []
+    image_data   = body.get("image") or ""
+
+    if "," not in image_data or not image_data.startswith("data:image"):
+        return jsonify({"error": "A chart image is required to export."}), 400
+
+    try:
+        image_bytes = base64.b64decode(image_data.split(",", 1)[1])
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid chart image data."}), 400
+
+    try:
+        if fmt == "pdf":
+            buffer = to_chart_pdf(title, image_bytes, x_label, y_label, labels, data, series_label, insights)
+        elif fmt == "docx":
+            buffer = to_chart_word(title, image_bytes, x_label, y_label, labels, data, series_label, insights)
+        else:
+            buffer = to_chart_excel(title, image_bytes, x_label, y_label, labels, data, series_label, insights)
+
+        filename, mimetype = _CHART_EXPORT_FORMATS[fmt]
+        logger.info("Chart export served — format: %s | title: %s", fmt, title)
+        return send_file(buffer, as_attachment=True, download_name=filename, mimetype=mimetype)
+    except Exception as e:
+        logger.exception("Chart export failed: %s", str(e))
+        return jsonify({"error": f"Chart export failed: {str(e)}"}), 500
 
 
 # ── Internal Helpers ───────────────────────────────────────────

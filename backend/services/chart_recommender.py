@@ -284,13 +284,16 @@ class ChartRecommender:
 
         try:
             # ── Insight 1: Chart Summary ─────────────────────────────────────
-            insights.append(f"📊 **Chart Summary:** Analyzing {nrows:,} data points.")
+            insights.append(f"Chart Summary: Analyzing {nrows:,} data points.")
 
             # ── Insight 2: Top / Highest category ─────────────────────────────
             if x_col and y_col and x_col in df.columns and y_col in df.columns:
                 try:
+                    valid = df[[x_col, y_col]].copy()
+                    valid[y_col] = pd.to_numeric(valid[y_col], errors="coerce")
+                    valid = valid.dropna(subset=[y_col])
                     agg = (
-                        df.groupby(x_col)[y_col]
+                        valid.groupby(x_col)[y_col]
                         .sum()
                         .sort_values(ascending=False)
                     )
@@ -301,25 +304,25 @@ class ChartRecommender:
 
                         pct_str = _generate_percentage_str(top_val, total_val)
                         insights.append(
-                            f"🏆 **Highest {x_col}:** {top_label} ({_fmt(top_val)}{pct_str})"
+                            f"Highest {x_col}: {top_label} ({_fmt(top_val)}{pct_str})"
                         )
 
                         # Lowest
                         bottom_label = str(agg.index[-1])
                         bottom_val = float(agg.iloc[-1])
                         insights.append(
-                            f"📉 **Lowest {x_col}:** {bottom_label} ({_fmt(bottom_val)})"
+                            f"Lowest {x_col}: {bottom_label} ({_fmt(bottom_val)})"
                         )
 
                         # Average across categories
                         avg_val = float(agg.mean())
                         insights.append(
-                            f"📈 **Average {y_col}:** {_fmt(avg_val)} across {len(agg)} categories"
+                            f"Average {y_col}: {_fmt(avg_val)} across {len(agg)} categories"
                         )
 
                         # Total value
                         insights.append(
-                            f"📋 **Total {y_col}:** {_fmt(total_val)}"
+                            f"Total {y_col}: {_fmt(total_val)}"
                         )
 
                         # Top 3 concentration
@@ -328,7 +331,7 @@ class ChartRecommender:
                             top3_pct = round(100 * top3_val / total_val, 1)
                             other_pct = round(100 - top3_pct, 1)
                             insights.append(
-                                f"🔍 **Distribution:** Top 3 {x_col}s contribute **{top3_pct}%** "
+                                f"Distribution: Top 3 {x_col}s contribute **{top3_pct}%** "
                                 f"of total {y_col} (others: {other_pct}%)"
                             )
 
@@ -337,12 +340,12 @@ class ChartRecommender:
                             top_pct = round(100 * top_val / total_val, 1)
                             if top_pct > 50:
                                 insights.append(
-                                    f"⚠ **Outlier:** '{top_label}' alone accounts for {top_pct}% "
+                                    f"Outlier: '{top_label}' alone accounts for {top_pct}% "
                                     f"of total {y_col} — dominant category detected."
                                 )
                             elif top_pct < 2 and len(agg) > 10:
                                 insights.append(
-                                    f"💡 **Key Finding:** {y_col} is evenly distributed "
+                                    f"Key Finding: {y_col} is evenly distributed "
                                     f"across {len(agg)} categories (no single dominant one)."
                                 )
                 except Exception:
@@ -354,7 +357,7 @@ class ChartRecommender:
                     s = pd.to_numeric(df[y_col], errors="coerce").dropna()
                     if not s.empty:
                         insights.append(
-                            f"📈 **{y_col} range:** {_fmt(s.min())} to {_fmt(s.max())} "
+                            f"{y_col} range: {_fmt(s.min())} to {_fmt(s.max())} "
                             f"(avg: {_fmt(s.mean())}, median: {_fmt(s.median())})"
                         )
                 except Exception:
@@ -374,18 +377,18 @@ class ChartRecommender:
                             if second_half > first_half * 1.1:
                                 change_pct = round(100 * (second_half - first_half) / max(first_half, 0.001), 1)
                                 insights.append(
-                                    f"📈 **Trend:** Upward trend detected — "
+                                    f"Trend: Upward trend detected — "
                                     f"values increased by ~{change_pct}% over the period"
                                 )
                             elif first_half > second_half * 1.1:
                                 change_pct = round(100 * (first_half - second_half) / max(first_half, 0.001), 1)
                                 insights.append(
-                                    f"📉 **Trend:** Downward trend detected — "
+                                    f"Trend: Downward trend detected — "
                                     f"values decreased by ~{change_pct}% over the period"
                                 )
                             else:
                                 insights.append(
-                                    f"➡️ **Trend:** Relatively stable over time "
+                                    f"Trend: Relatively stable over time "
                                     f"(within 10% of mean)"
                                 )
                 except Exception:
@@ -403,7 +406,7 @@ class ChartRecommender:
                         direction = "positive" if corr > 0 else "negative"
                         strength = "strong" if abs(corr) > 0.7 else "moderate" if abs(corr) > 0.3 else "weak"
                         insights.append(
-                            f"🔗 **Correlation:** {strength.capitalize()} {direction} "
+                            f"Correlation: {strength.capitalize()} {direction} "
                             f"correlation (r={corr:.2f}) between {x_col} and {y_col} "
                             f"across {len(tmp)} data points"
                         )
@@ -430,7 +433,7 @@ class ChartRecommender:
                             else:
                                 tail = "light tails"
                             insights.append(
-                                f"🔍 **Distribution:** {col} is {shape} with {tail}"
+                                f"Distribution: {col} is {shape} with {tail}"
                             )
                 except Exception:
                     pass
@@ -447,13 +450,13 @@ class ChartRecommender:
                 )
                 if pct > 0:
                     insights.append(
-                        f"⚠️ **Data Quality:** '{worst}' has "
+                        f"Data Quality: '{worst}' has "
                         f"{cols[worst]['missing_count']} missing values ({pct}%)"
                     )
 
             # ── Insight 8: Dataset size ──────────────────────────────────────
             if nrows > 0:
-                insights.append(f"📋 Based on **{nrows:,}** total data point{'s' if nrows != 1 else ''}")
+                insights.append(f"Based on **{nrows:,}** total data point{'s' if nrows != 1 else ''}")
 
         except Exception:
             pass  # insights are bonus — never break the chart

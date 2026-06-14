@@ -120,74 +120,84 @@
           <div class="sidebar-section">
             <div class="sidebar-label">Dataset Overview</div>
             <div class="sidebar-metrics-grid">
+              <span class="sidebar-metrics-subhead">Volume</span>
               <div class="metric-widget" title="Total Rows">
-                <i class="ti ti-table-row"></i>
+                <span class="metric-icon-box"><i class="ti ti-table-row"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbRows">—</span>
                   <span class="metric-label">Rows</span>
                 </div>
               </div>
               <div class="metric-widget" title="Total Columns">
-                <i class="ti ti-columns"></i>
+                <span class="metric-icon-box"><i class="ti ti-columns"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbCols">—</span>
                   <span class="metric-label">Cols</span>
                 </div>
               </div>
               <div class="metric-widget" title="Dataset Size">
-                <i class="ti ti-database"></i>
+                <span class="metric-icon-box"><i class="ti ti-database"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbSize">—</span>
                   <span class="metric-label">Size</span>
                 </div>
               </div>
+
+              <span class="sidebar-metrics-subhead">Column Types</span>
               <div class="metric-widget" title="Numeric Columns">
-                <i class="ti ti-numbers"></i>
+                <span class="metric-icon-box"><i class="ti ti-numbers"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbNum">—</span>
                   <span class="metric-label">Num</span>
                 </div>
               </div>
               <div class="metric-widget" title="Categorical Columns">
-                <i class="ti ti-tags"></i>
+                <span class="metric-icon-box"><i class="ti ti-tags"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbCat">—</span>
                   <span class="metric-label">Cat</span>
                 </div>
               </div>
               <div class="metric-widget" title="Date/Time Columns">
-                <i class="ti ti-calendar"></i>
+                <span class="metric-icon-box"><i class="ti ti-calendar"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbDate">—</span>
                   <span class="metric-label">Date</span>
                 </div>
               </div>
               <div class="metric-widget" title="Boolean Columns">
-                <i class="ti ti-toggle-left"></i>
+                <span class="metric-icon-box"><i class="ti ti-toggle-left"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbBool">—</span>
                   <span class="metric-label">Bool</span>
                 </div>
               </div>
+
+              <span class="sidebar-metrics-subhead">Data Quality</span>
               <div class="metric-widget" title="Missing Values">
-                <i class="ti ti-alert-circle"></i>
+                <span class="metric-icon-box"><i class="ti ti-alert-circle"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbMissing">—</span>
                   <span class="metric-label">Missing</span>
                 </div>
               </div>
               <div class="metric-widget" title="Duplicate Records">
-                <i class="ti ti-copy"></i>
+                <span class="metric-icon-box"><i class="ti ti-copy"></i></span>
                 <div class="metric-info">
                   <span class="metric-value" id="sbDupes">—</span>
                   <span class="metric-label">Dupes</span>
                 </div>
               </div>
-              <div class="metric-widget" title="Dataset Health Score">
-                <i class="ti ti-heartbeat"></i>
+
+              <div class="metric-widget metric-widget-health" id="sbHealthWidget" title="Dataset Health Score">
+                <span class="metric-icon-box"><i class="ti ti-heartbeat"></i></span>
                 <div class="metric-info">
-                  <span class="metric-value" id="sbHealth">—</span>
-                  <span class="metric-label">Health</span>
+                  <div class="metric-health-top">
+                    <span class="metric-value" id="sbHealth">—</span>
+                    <span class="metric-label">Health Score</span>
+                    <span class="metric-health-status" id="sbHealthStatus"></span>
+                  </div>
+                  <div class="metric-health-track"><span id="sbHealthFill"></span></div>
                 </div>
               </div>
             </div>
@@ -199,13 +209,13 @@
             <nav class="sidebar-nav">
               <button class="sidebar-nav-item" data-view="overview" onclick="showDatasetOverview()">
                 <span class="nav-item-icon-box"><i class="ti ti-dashboard"></i></span>
-                <span>📊 Dataset Overview</span>
+                <span>Dataset Overview</span>
               </button>
 
               <!-- Visualization Toggle -->
               <button class="sidebar-nav-item sidebar-sub-toggle" data-view="visualization" onclick="toggleVizSubMenu()">
                 <span class="nav-item-icon-box"><i class="ti ti-chart-bar"></i></span>
-                <span>📈 Visualization</span>
+                <span>Visualization</span>
                 <span class="sub-toggle-arrow" id="vizSubArrow">▾</span>
               </button>
 
@@ -213,11 +223,11 @@
               <div class="sidebar-sub-menu" id="vizSubMenu">
                 <button class="sidebar-nav-item sidebar-sub-item" data-view="auto-viz" onclick="showAutoVisualization()">
                   <span class="nav-item-icon-box"><i class="ti ti-sparkles"></i></span>
-                  <span>✨ Auto Visualization</span>
+                  <span>Auto Visualization</span>
                 </button>
                 <button class="sidebar-nav-item sidebar-sub-item" data-view="custom-chart" onclick="showCustomChartBuilder()">
                   <span class="nav-item-icon-box"><i class="ti ti-tools"></i></span>
-                  <span>🛠 Custom Chart Builder</span>
+                  <span>Custom Chart Builder</span>
                 </button>
               </div>
             </nav>
@@ -318,7 +328,7 @@
         <section id="autoVizPage" class="dataset-overview-page" style="display:none;" aria-labelledby="autoVizTitle">
           <div class="overview-page-header">
             <div>
-              <div class="overview-eyebrow">✨ One-click chart generation</div>
+              <div class="overview-eyebrow">One-click chart generation</div>
               <h1 id="autoVizTitle">Auto Visualization</h1>
               <p>AI automatically analyzes your dataset and generates the most relevant charts.</p>
             </div>
@@ -337,11 +347,12 @@
             <!-- Column profile summary -->
             <div class="viz-column-profile" id="vizColumnProfile"></div>
 
-            <!-- Generate All button -->
-            <div class="auto-viz-actions">
-              <button class="auto-viz-generate-all" onclick="generateAllAutoVizCharts()">
-                <i class="ti ti-sparkles"></i> Generate All Charts
-              </button>
+            <!-- Confidence score legend -->
+            <div class="auto-viz-confidence-legend">
+              <span class="auto-viz-legend-title"><i class="ti ti-info-circle"></i> Confidence score</span>
+              <span class="auto-viz-legend-item"><span class="confidence-badge score-high">85-100%</span> Strong fit for this chart type</span>
+              <span class="auto-viz-legend-item"><span class="confidence-badge score-mid">75-84%</span> Good fit, worth reviewing</span>
+              <span class="auto-viz-legend-item"><span class="confidence-badge score-low">&lt;75%</span> Possible fit, verify before use</span>
             </div>
 
             <!-- Recommendations grid -->
@@ -355,7 +366,7 @@
         <section id="customChartPage" class="dataset-overview-page" style="display:none;" aria-labelledby="customChartTitle">
           <div class="overview-page-header">
             <div>
-              <div class="overview-eyebrow">🛠 Build your own chart</div>
+              <div class="overview-eyebrow">Build your own chart</div>
               <h1 id="customChartTitle">Custom Chart Builder</h1>
               <p>Select chart type, axes, aggregation, and filters — no coding needed.</p>
             </div>
@@ -415,15 +426,18 @@
                   <input type="number" class="viz-input" id="customTopN" value="20" min="3" max="200" />
                 </div>
 
+                <!-- Note explaining controls disabled for the current chart type -->
+                <div id="customControlsNote" class="custom-chart-note" style="display:none;"></div>
+
                 <!-- Validation warning -->
                 <div id="customChartWarning" class="custom-chart-warning" style="display:none;"></div>
 
                 <div class="custom-chart-actions">
                   <button class="auto-viz-generate-all" id="customGenerateBtn">
-                    <i class="ti ti-chart-bar"></i> Generate Chart
+                    <i class="ti ti-chart-bar"></i> Build Chart
                   </button>
                   <button class="custom-reset-btn" onclick="resetCustomChartBuilder()">
-                    <i class="ti ti-refresh"></i> Reset
+                    <i class="ti ti-refresh"></i> Clear
                   </button>
                 </div>
               </div>
@@ -434,10 +448,10 @@
                   <h3>Chart Preview</h3>
                   <!-- Export buttons -->
                   <div class="custom-chart-export-actions">
-                    <button class="toolbar-btn" onclick="exportCustomChart('png')" title="Export as PNG">🖼 PNG</button>
-                    <button class="toolbar-btn" onclick="exportCustomChart('pdf')" title="Export as PDF">📄 PDF</button>
-                    <button class="toolbar-btn" onclick="exportCustomChart('xlsx')" title="Export as Excel">📊 Excel</button>
-                    <button class="toolbar-btn" onclick="exportCustomChart('docx')" title="Export as Word">📝 Word</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('png', this)" title="Export as PNG"><i class="ti ti-photo"></i> PNG</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('pdf', this)" title="Export as PDF"><i class="ti ti-file-text"></i> PDF</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('xlsx', this)" title="Export as Excel"><i class="ti ti-table"></i> Excel</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('docx', this)" title="Export as Word"><i class="ti ti-file-word"></i> Word</button>
                   </div>
                 </div>
 
@@ -537,7 +551,7 @@
           </span>
           <span>Build Visualization</span>
         </div>
-        <button class="viz-modal-close" id="vizModalClose">✕</button>
+        <button class="viz-modal-close" id="vizModalClose" aria-label="Close"><i class="ti ti-x"></i></button>
       </div>
       <div class="viz-modal-body">
         <!-- Left: controls -->
@@ -617,9 +631,12 @@
     </div>
   </div>
 
-  <!-- Chart.js -->
+  <!-- Toast notifications -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <script src="{{ url_for('static', filename='main.js') }}"></script>
 </body>
 </html>

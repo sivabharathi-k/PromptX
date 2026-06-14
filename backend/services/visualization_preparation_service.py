@@ -281,7 +281,7 @@ class VisualizationPreparationService:
         bin_edges = [float(e) for e in bin_edges]
 
         labels = [
-            f"{bin_edges[i]:.2g}–{bin_edges[i + 1]:.2g}"
+            f"{_format_value(bin_edges[i])}–{_format_value(bin_edges[i + 1])}"
             for i in range(len(bin_edges) - 1)
         ]
         data = [int(c) for c in counts]
@@ -313,42 +313,57 @@ class VisualizationPreparationService:
         top_n: int | None = None,
     ) -> dict:
         tmp = df[[xcol, ycol]].copy()
-        try:
-            tmp[xcol] = pd.to_datetime(tmp[xcol], errors="coerce")
-        except Exception:
-            tmp[xcol] = pd.to_datetime(tmp[xcol], errors="coerce")
         tmp[ycol] = pd.to_numeric(tmp[ycol], errors="coerce")
-        tmp = tmp.dropna(subset=[xcol, ycol])
+        tmp = tmp.dropna(subset=[ycol])
         if tmp.empty:
             raise ValueError("Line/Area requires non-empty date+numeric values")
 
-        tmp = tmp.sort_values(xcol)
+        try:
+            parsed_x = pd.to_datetime(tmp[xcol], errors="coerce")
+        except Exception:
+            parsed_x = pd.to_datetime(tmp[xcol], errors="coerce")
 
-        # Aggregate if many points
-        if len(tmp) > self.max_line_points:
-            tmp["_bucket"] = tmp[xcol].dt.to_period("M").astype(str)
-            agg_func = "mean" if aggregation == "avg" else aggregation
-            if agg_func == "count":
-                agg = tmp.groupby("_bucket")[ycol].count().reset_index()
-            elif agg_func == "median":
-                agg = tmp.groupby("_bucket")[ycol].median().reset_index()
-            elif agg_func == "min":
-                agg = tmp.groupby("_bucket")[ycol].min().reset_index()
-            elif agg_func == "max":
-                agg = tmp.groupby("_bucket")[ycol].max().reset_index()
-            else:
-                agg = tmp.groupby("_bucket")[ycol].sum().reset_index()
-            labels = agg["_bucket"].tolist()
-            values = [float(v) for v in agg[ycol].tolist()]
+        # Some "date-like" columns (month names "Jan"/"Feb", weekday names,
+        # quarters, etc.) parse to a placeholder year of 1 because no year is
+        # present in the source. Use the original text as the display label
+        # but still order chronologically by the parsed calendar position.
+        valid_years = parsed_x.dropna().dt.year
+        no_year_info = not valid_years.empty and valid_years.max() <= 1
+
+        tmp["_sort_key"] = parsed_x
+        tmp["_label"] = tmp[xcol].astype(str) if no_year_info else parsed_x
+        tmp = tmp.dropna(subset=["_sort_key"])
+        if tmp.empty:
+            raise ValueError("Line/Area requires non-empty date+numeric values")
+
+        agg_func = "mean" if aggregation == "avg" else aggregation
+        if agg_func not in ("sum", "mean", "count", "median", "min", "max"):
+            agg_func = "sum"
+
+        # Aggregate duplicate time periods (e.g. several rows per month) using
+        # the requested aggregation, then sort chronologically for the trend.
+        grouped = tmp.groupby("_label", sort=False).agg(
+            _sort_key=("_sort_key", "first"), _value=(ycol, agg_func),
+        ).reset_index().sort_values("_sort_key")
+
+        if len(grouped) > self.max_line_points:
+            tmp["_bucket"] = tmp["_sort_key"].dt.to_period("M").astype(str)
+            grouped = tmp.groupby("_bucket", sort=False).agg(
+                _sort_key=("_sort_key", "first"), _value=(ycol, agg_func),
+            ).reset_index().sort_values("_sort_key")
+            labels = grouped["_bucket"].tolist()
+        elif no_year_info:
+            labels = grouped["_label"].tolist()
         else:
-            labels = tmp[xcol].dt.strftime("%Y-%m-%d").tolist()
-            values = [float(v) for v in tmp[ycol].tolist()]
+            labels = grouped["_label"].dt.strftime("%Y-%m-%d").tolist()
+
+        values = [float(v) for v in grouped["_value"].tolist()]
 
         return {
             "plotType": "line" if not area else "area",
-            "title": f"{ycol} over time by {xcol}",
+            "title": f"{aggregation.upper()} of {ycol} over time by {xcol}",
             "xLabel": xcol,
-            "yLabel": ycol,
+            "yLabel": f"{aggregation.upper()}({ycol})",
             "series": [{"label": ycol, "data": values, "labels": labels}],
             "area": area,
             "total_points": len(values),
