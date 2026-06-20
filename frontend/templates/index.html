@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PromptX</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='promptx-logo.svg') }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body data-theme="light">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       WORKSPACE
+  ════════════════════════════════════════════════════════════════ -->
+  <div id="chatScreen" class="chat-screen">
+
+    <!-- HEADER -->
+    <header class="chat-header">
+      <div class="chat-header-left">
+        <button class="btn-icon" id="leftSidebarToggle" title="Toggle navigation" aria-label="Toggle navigation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        </button>
+        <a href="/" class="header-logo-link" aria-label="PromptX Home">
+          <img src="{{ url_for('static', filename='promptx-logo.svg') }}" alt="PromptX" class="header-logo-img" />
+        </a>
+      </div>
+
+      <div class="chat-header-right">
+        <div class="dataset-badge" id="datasetBadge">
+          <span class="dataset-badge-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+          </span>
+          <div class="dataset-badge-info">
+            <span class="dataset-badge-name" id="datasetName">No dataset</span>
+            <span class="dataset-badge-meta" id="datasetMeta">Upload a file to begin</span>
+          </div>
+          <span class="dataset-badge-status" id="datasetBadgeStatus">● No data</span>
+        </div>
+
+        <button class="btn-icon" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
+          </svg>
+        </button>
+
+        <button class="btn-icon btn-new-chat" id="newChatBtn" title="New dataset" aria-label="Start with a new dataset">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Dataset
+        </button>
+      </div>
+    </header>
+
+    <!-- ENTERPRISE MAIN LAYOUT -->
+    <div class="chat-layout">
+      <!-- LEFT NAVIGATION -->
+      <aside class="chat-sidebar left-sidebar" id="leftSidebar">
+        <div class="sidebar-header">
+          <img src="{{ url_for('static', filename='promptx-logo.svg') }}" alt="PromptX" class="sidebar-logo-img" />
+          <button class="btn-icon sidebar-close" id="leftSidebarClose" aria-label="Close navigation">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18"/><path d="M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sidebar-body">
+          <div class="sidebar-section">
+            <div class="sidebar-label">Dataset Overview</div>
+            <div class="sidebar-metrics-grid">
+              <span class="sidebar-metrics-subhead">Volume</span>
+              <div class="metric-widget" title="Total Rows">
+                <span class="metric-icon-box"><i class="ti ti-table-row"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbRows">—</span>
+                  <span class="metric-label">Rows</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Total Columns">
+                <span class="metric-icon-box"><i class="ti ti-columns"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbCols">—</span>
+                  <span class="metric-label">Cols</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Dataset Size">
+                <span class="metric-icon-box"><i class="ti ti-database"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbSize">—</span>
+                  <span class="metric-label">Size</span>
+                </div>
+              </div>
+              <span class="sidebar-metrics-subhead">Column Types</span>
+              <div class="metric-widget" title="Numeric Columns">
+                <span class="metric-icon-box"><i class="ti ti-numbers"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbNum">—</span>
+                  <span class="metric-label">Num</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Categorical Columns">
+                <span class="metric-icon-box"><i class="ti ti-tags"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbCat">—</span>
+                  <span class="metric-label">Cat</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Date/Time Columns">
+                <span class="metric-icon-box"><i class="ti ti-calendar"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbDate">—</span>
+                  <span class="metric-label">Date</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Boolean Columns">
+                <span class="metric-icon-box"><i class="ti ti-toggle-left"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbBool">—</span>
+                  <span class="metric-label">Bool</span>
+                </div>
+              </div>
+              <span class="sidebar-metrics-subhead">Data Quality</span>
+              <div class="metric-widget" title="Missing Values">
+                <span class="metric-icon-box"><i class="ti ti-alert-circle"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbMissing">—</span>
+                  <span class="metric-label">Missing</span>
+                </div>
+              </div>
+              <div class="metric-widget" title="Duplicate Records">
+                <span class="metric-icon-box"><i class="ti ti-copy"></i></span>
+                <div class="metric-info">
+                  <span class="metric-value" id="sbDupes">—</span>
+                  <span class="metric-label">Dupes</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-label">Navigation</div>
+            <nav class="sidebar-nav">
+              <button class="sidebar-nav-item" data-view="overview" onclick="showDatasetOverview()">
+                <span class="nav-item-icon-box"><i class="ti ti-dashboard"></i></span>
+                <span>Dataset Overview</span>
+              </button>
+              <button class="sidebar-nav-item sidebar-sub-toggle" data-view="visualization" onclick="toggleVizSubMenu()">
+                <span class="nav-item-icon-box"><i class="ti ti-chart-bar"></i></span>
+                <span>Visualization</span>
+                <span class="sub-toggle-arrow" id="vizSubArrow">▾</span>
+              </button>
+              <div class="sidebar-sub-menu" id="vizSubMenu">
+                <button class="sidebar-nav-item sidebar-sub-item" data-view="auto-viz" onclick="showAutoVisualization()">
+                  <span class="nav-item-icon-box"><i class="ti ti-sparkles"></i></span>
+                  <span>Auto Visualization</span>
+                </button>
+                <button class="sidebar-nav-item sidebar-sub-item" data-view="custom-chart" onclick="showCustomChartBuilder()">
+                  <span class="nav-item-icon-box"><i class="ti ti-tools"></i></span>
+                  <span>Custom Chart Builder</span>
+                </button>
+              </div>
+              <button class="sidebar-nav-item" data-view="replace-missing" onclick="showReplaceMissingPage()">
+                <span class="nav-item-icon-box"><i class="ti ti-replace"></i></span>
+                <span>Replace Null or Empty Values</span>
+                <span class="sidebar-nav-badge" id="replaceMissingBadge" style="display:none;">0</span>
+              </button>
+            </nav>
+          </div>
+        </div>
+      </aside>
+
+      <div id="sidebarScrim"></div>
+
+      <main class="chat-main" id="chatMain">
+
+        <!-- DATASET OVERVIEW -->
+        <section id="datasetOverview" class="dataset-overview-page" style="display:none;" aria-labelledby="overviewTitle">
+          <div class="overview-page-header">
+            <div>
+              <div class="overview-eyebrow">Dataset intelligence</div>
+              <h1 id="overviewTitle">Dataset Overview</h1>
+              <p>A dynamic profile of the active dataset, generated from its schema and values.</p>
+            </div>
+            <button class="overview-close-btn" type="button" onclick="closeDatasetOverview()" aria-label="Return to chat">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+          <div id="overviewLoading" class="overview-loading">
+            <span class="overview-spinner"></span>
+            Generating dataset overview...
+          </div>
+          <div id="overviewError" class="overview-error" style="display:none;"></div>
+          <div id="overviewContent" style="display:none;">
+            <section class="overview-section">
+              <div class="overview-section-heading"><span>1</span><div><h2>Dataset Summary</h2><p>Scale and storage profile</p></div></div>
+              <div class="overview-stat-grid" id="overviewSummary"></div>
+            </section>
+            <section class="overview-section">
+              <div class="overview-section-heading"><span>2</span><div><h2>Column Type Distribution</h2><p>Automatically detected data types</p></div></div>
+              <div class="overview-stat-grid" id="overviewTypes"></div>
+            </section>
+            <section class="overview-section">
+              <div class="overview-section-heading"><span>3</span><div><h2>Dataset Schema Summary</h2><p>Types, null counts, and representative non-null values</p></div></div>
+              <div class="overview-table-wrap" id="overviewSchemaTableWrap">
+                <table class="overview-schema-table">
+                  <thead><tr><th>Column Name</th><th>Data Type</th><th>Null / Total</th><th>Sample Values (up to 3)</th></tr></thead>
+                  <tbody id="overviewSchemaBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <div class="overview-two-column">
+              <section class="overview-section">
+                <div class="overview-section-heading"><span>4</span><div><h2>Data Quality Summary</h2><p>Completeness, duplication, outliers, and anomalies</p></div></div>
+                <div class="overview-detail-list" id="overviewQuality"></div>
+              </section>
+              <section class="overview-section">
+                <div class="overview-section-heading"><span>5</span><div><h2>Key Column Detection</h2><p>Identifier, time, and measure candidates</p></div></div>
+                <div class="overview-detail-list" id="overviewKeys"></div>
+              </section>
+            </div>
+            <section class="overview-section" id="overviewIssuesSection" style="display:none;">
+              <div class="overview-section-heading"><span>!</span><div><h2>Issues Detected</h2><p>Data quality problems that may affect analysis accuracy</p></div></div>
+              <div id="overviewIssues" class="overview-issues-list"></div>
+            </section>
+            <section class="overview-export-panel">
+              <div><h2>Export Overview</h2><p>Download this report through the existing export service.</p></div>
+              <div class="overview-export-actions">
+                <select id="overviewExportFormat" class="overview-export-select" aria-label="Export format">
+                  <option value="xlsx">Excel (.xlsx)</option>
+                  <option value="pdf">PDF (.pdf)</option>
+                  <option value="docx">Word (.docx)</option>
+                  <option value="png">PNG (.png)</option>
+                  <option value="jpg">JPG (.jpg)</option>
+                </select>
+                <button class="overview-export-btn" type="button" onclick="exportDatasetOverview()">
+                  <i class="ti ti-download"></i> Export Overview
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <!-- AUTO VISUALIZATION -->
+        <section id="autoVizPage" class="dataset-overview-page" style="display:none;" aria-labelledby="autoVizTitle">
+          <div class="overview-page-header">
+            <div>
+              <div class="overview-eyebrow">One-click chart generation</div>
+              <h1 id="autoVizTitle">Auto Visualization</h1>
+              <p>AI automatically analyzes your dataset and generates the most relevant charts.</p>
+            </div>
+            <button class="overview-close-btn" type="button" onclick="closeAutoVisualization()" aria-label="Return to chat">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+          <div id="autoVizLoading" class="overview-loading" style="display:flex;">
+            <span class="overview-spinner"></span>
+            Analyzing dataset and generating recommendations...
+          </div>
+          <div id="autoVizError" class="overview-error" style="display:none;"></div>
+          <div id="autoVizContent" style="display:none;">
+            <div class="viz-column-profile" id="vizColumnProfile"></div>
+            <div class="auto-viz-confidence-legend">
+              <span class="auto-viz-legend-title"><i class="ti ti-info-circle"></i> Confidence score</span>
+              <span class="auto-viz-legend-item"><span class="confidence-badge score-high">85-100%</span> Strong fit for this chart type</span>
+              <span class="auto-viz-legend-item"><span class="confidence-badge score-mid">75-84%</span> Good fit, worth reviewing</span>
+              <span class="auto-viz-legend-item"><span class="confidence-badge score-low"><75%</span> Possible fit, verify before use</span>
+            </div>
+            <div class="auto-viz-grid" id="autoVizGrid"></div>
+          </div>
+        </section>
+
+        <!-- CUSTOM CHART BUILDER -->
+        <section id="customChartPage" class="dataset-overview-page" style="display:none;" aria-labelledby="customChartTitle">
+          <div class="overview-page-header">
+            <div>
+              <div class="overview-eyebrow">Build your own chart</div>
+              <h1 id="customChartTitle">Custom Chart Builder</h1>
+              <p>Select chart type, axes, and aggregation — no coding needed.</p>
+            </div>
+            <button class="overview-close-btn" type="button" onclick="closeCustomChartBuilder()" aria-label="Return to chat">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+          <div id="customChartContent">
+            <div class="custom-chart-layout">
+              <div class="custom-chart-controls">
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Chart Type</label>
+                  <div class="viz-chart-type-grid" id="customChartTypeGrid">
+                    <button class="viz-chart-type-btn active" data-type="bar">Bar</button>
+                    <button class="viz-chart-type-btn" data-type="line">Line</button>
+                    <button class="viz-chart-type-btn" data-type="pie">Pie</button>
+                    <button class="viz-chart-type-btn" data-type="scatter">Scatter</button>
+                    <button class="viz-chart-type-btn" data-type="histogram">Histogram</button>
+                    <button class="viz-chart-type-btn" data-type="area">Area</button>
+                  </div>
+                </div>
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">X-Axis <span class="viz-ctrl-sub">(Category / Label)</span></label>
+                  <select class="viz-select" id="customXAxis"></select>
+                </div>
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Y-Axis <span class="viz-ctrl-sub">(Value)</span></label>
+                  <select class="viz-select" id="customYAxis"></select>
+                </div>
+                <div class="custom-chart-section">
+                  <label class="viz-ctrl-label">Aggregation Type</label>
+                  <div class="viz-agg-row" id="customAggRow">
+                    <button class="viz-agg-btn active" data-agg="sum">Sum</button>
+                    <button class="viz-agg-btn" data-agg="avg">Avg</button>
+                    <button class="viz-agg-btn" data-agg="count">Count</button>
+                    <button class="viz-agg-btn" data-agg="max">Max</button>
+                    <button class="viz-agg-btn" data-agg="min">Min</button>
+                    <button class="viz-agg-btn" data-agg="median">Median</button>
+                  </div>
+                </div>
+                <div id="customControlsNote" class="custom-chart-note" style="display:none;"></div>
+                <div id="customChartWarning" class="custom-chart-warning" style="display:none;"></div>
+                <div class="custom-chart-actions">
+                  <button class="auto-viz-generate-all" id="customGenerateBtn">
+                    <i class="ti ti-chart-bar"></i> Build Chart
+                  </button>
+                  <button class="custom-reset-btn" onclick="resetCustomChartBuilder()">
+                    <i class="ti ti-refresh"></i> Clear
+                  </button>
+                </div>
+              </div>
+              <div class="custom-chart-preview">
+                <div class="custom-chart-preview-header">
+                  <h3>Chart Preview</h3>
+                  <div class="custom-chart-export-actions">
+                    <button class="toolbar-btn" onclick="exportCustomChart('png', this)" title="Export as PNG"><i class="ti ti-photo"></i> PNG</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('pdf', this)" title="Export as PDF"><i class="ti ti-file-text"></i> PDF</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('xlsx', this)" title="Export as Excel"><i class="ti ti-table"></i> Excel</button>
+                    <button class="toolbar-btn" onclick="exportCustomChart('docx', this)" title="Export as Word"><i class="ti ti-file-word"></i> Word</button>
+                  </div>
+                </div>
+                <div class="custom-chart-canvas-wrap">
+                  <canvas id="customChartCanvas"></canvas>
+                  <div id="customChartEmpty" class="viz-preview-empty" style="display:flex;">
+                    <div class="viz-preview-empty-icon">
+                      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h7"/></svg>
+                    </div>
+                    <p>Configure and click<br><strong>Generate Chart</strong></p>
+                  </div>
+                </div>
+                <div id="customChartInsights" class="chart-insights-panel" style="display:none;">
+                  <h4><i class="ti ti-bulb"></i> Chart Insights</h4>
+                  <div id="customChartInsightsBody" class="chart-insights-body"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             REPLACE NULL OR EMPTY VALUES PAGE
+        ════════════════════════════════════════════════════════════ -->
+        <section id="replaceMissingPage" class="dataset-overview-page" style="display:none;" aria-labelledby="replaceMissingTitle">
+          <div class="overview-page-header">
+            <div>
+              <div class="overview-eyebrow">Data Cleaning</div>
+              <h1 id="replaceMissingTitle">Replace Null or Empty Values</h1>
+              <p>Identify, review, and replace missing/null/empty values in your dataset.</p>
+            </div>
+            <button class="overview-close-btn" type="button" onclick="closeReplaceMissingPage()" aria-label="Return to chat">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+
+          <!-- Data Quality Summary -->
+          <div id="replaceMissingQualitySummary" class="rm-quality-summary" style="display:none;">
+            <div class="rm-quality-card rm-quality-before">
+              <span class="rm-quality-label">Before Cleaning</span>
+              <span class="rm-quality-value" id="rmQualityBefore">0</span>
+            </div>
+            <div class="rm-quality-card rm-quality-after">
+              <span class="rm-quality-label">After Cleaning</span>
+              <span class="rm-quality-value" id="rmQualityAfter">0</span>
+            </div>
+            <div class="rm-quality-card rm-quality-resolved">
+              <span class="rm-quality-label">Resolved</span>
+              <span class="rm-quality-value" id="rmQualityResolved">0</span>
+            </div>
+          </div>
+
+          <div id="replaceMissingLoading" class="overview-loading" style="display:flex;">
+            <span class="overview-spinner"></span>
+            Scanning for missing values...
+          </div>
+          <div id="replaceMissingError" class="overview-error" style="display:none;"></div>
+
+          <div id="replaceMissingContent" style="display:none;">
+            <!-- Search & Sort -->
+            <div class="rm-toolbar">
+              <div class="rm-search-wrap">
+                <i class="ti ti-search rm-search-icon"></i>
+                <input type="text" id="rmSearchInput" class="rm-search-input" placeholder="Search columns..." oninput="filterReplaceMissingColumns()" />
+              </div>
+              <button class="rm-sort-btn" id="rmSortBtn" onclick="toggleReplaceMissingSort()" title="Sort by missing count">
+                <i class="ti ti-sort-ascending"></i> Sort
+              </button>
+            </div>
+
+            <!-- Column List + Detail Panel -->
+            <div class="rm-layout">
+              <!-- Column list -->
+              <div class="rm-column-list" id="rmColumnList"></div>
+
+              <!-- Detail Panel -->
+              <div class="rm-detail-panel" id="rmDetailPanel" style="display:none;">
+                <div class="rm-detail-header">
+                  <h2 id="rmDetailColName">—</h2>
+                  <div class="rm-detail-meta">
+                    <span id="rmDetailDataType">—</span>
+                    <span id="rmDetailTotalRows">Total: —</span>
+                    <span id="rmDetailMissingCount" class="rm-detail-missing-badge">Missing: —</span>
+                  </div>
+                </div>
+
+                <!-- Existing Values Preview -->
+                <div class="rm-detail-section">
+                  <div class="rm-detail-section-title">Current Values (preview)</div>
+                  <div class="rm-values-preview" id="rmValuesPreview">
+                    <div class="rm-values-scroll"></div>
+                  </div>
+                </div>
+
+                <!-- Replace Options -->
+                <div class="rm-detail-section">
+                  <div class="rm-detail-section-title">Replace Missing Values</div>
+
+                  <!-- For Numeric Columns: Mean, Median, Mode, Custom -->
+                  <div id="rmReplaceOptionsNumeric" style="display:none;">
+                    <div class="rm-option-row">
+                      <button class="rm-option-btn" data-method="mean" onclick="selectReplaceMethod('mean')">
+                        <span class="rm-option-radio"></span>
+                        <span class="rm-option-label">Mean</span>
+                        <span class="rm-option-value" id="rmMeanValue">—</span>
+                      </button>
+                      <button class="rm-option-btn" data-method="median" onclick="selectReplaceMethod('median')">
+                        <span class="rm-option-radio"></span>
+                        <span class="rm-option-label">Median</span>
+                        <span class="rm-option-value" id="rmMedianValue">—</span>
+                      </button>
+                      <button class="rm-option-btn" data-method="mode" onclick="selectReplaceMethod('mode')">
+                        <span class="rm-option-radio"></span>
+                        <span class="rm-option-label">Mode</span>
+                        <span class="rm-option-value" id="rmModeValue">—</span>
+                      </button>
+                      <button class="rm-option-btn" data-method="custom" onclick="selectReplaceMethod('custom')">
+                        <span class="rm-option-radio"></span>
+                        <span class="rm-option-label">Custom Value</span>
+                      </button>
+                    </div>
+                    <div id="rmCustomInputWrap" class="rm-custom-input-wrap" style="display:none;">
+                      <input type="text" id="rmCustomInput" class="rm-custom-input" placeholder="Enter replacement value..." />
+                    </div>
+                  </div>
+
+                  <!-- For Categorical Columns: Mode, Custom, NULL -->
+                  <div id="rmReplaceOptionsCategorical" style="display:none;">
+                    <div class="rm-option-row">
+                      <button class="rm-option-btn" data-method="mode" onclick="selectReplaceMethod('mode')">
+                        <span class="rm-option-radio"></span>
+                        <span class="rm-option-label">Mode</span>
+                        <span class="rm-option-value" id="rmCatModeValue">—</span>
+                      </button>
+                      <button class="rm-option-btn" data-method="custom" onclick="selectReplaceMethod('custom')">
+                        <span class="rm-option-radio"></span>
+                        <span class="rm-option-label">Custom Value</span>
+                      </button>
+                      <button class="rm-option-btn" data-method="null" onclick="selectReplaceMethod('null')">
+                        <span class="rm-option-radio"></span>
+                        <span class="rm-option-label">NULL</span>
+                      </button>
+                    </div>
+                    <div id="rmCustomInputWrap2" class="rm-custom-input-wrap" style="display:none;">
+                      <input type="text" id="rmCustomInput2" class="rm-custom-input" placeholder="Enter replacement value..." />
+                    </div>
+                  </div>
+
+                  <!-- Apply button -->
+                  <div class="rm-apply-wrap">
+                    <button class="rm-apply-btn" id="rmPreviewBtn" onclick="previewReplaceValues()" disabled>
+                      <i class="ti ti-eye"></i> Preview
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Preview Section -->
+                <div id="rmPreviewSection" class="rm-preview-section" style="display:none;">
+                  <div class="rm-detail-section-title">Preview Changes</div>
+                  <div class="rm-preview-table" id="rmPreviewTable"></div>
+                  <div class="rm-preview-info" id="rmPreviewInfo">Affected Rows: 0</div>
+                  <div class="rm-preview-actions">
+                    <button class="rm-confirm-btn" id="rmConfirmBtn" onclick="confirmReplaceValues()">
+                      <i class="ti ti-check"></i> Confirm
+                    </button>
+                    <button class="rm-cancel-btn" onclick="cancelReplacePreview()">
+                      <i class="ti ti-x"></i> Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sticky Action Bar -->
+          <div class="rm-action-bar" id="rmActionBar">
+            <div class="rm-action-bar-inner">
+              <button class="rm-action-btn rm-undo-btn" id="rmUndoBtn" onclick="undoLastReplace()" disabled title="Undo last replacement">
+                <i class="ti ti-arrow-back-up"></i> Undo Last Change
+              </button>
+              <div class="rm-export-dropdown">
+                <button class="rm-action-btn rm-export-btn" id="rmExportBtn" onclick="toggleExportMenu()" disabled title="Export cleaned dataset">
+                  <i class="ti ti-download"></i> Export ▼
+                </button>
+                <div class="rm-export-menu" id="rmExportMenu">
+                  <button class="rm-export-opt" onclick="exportCleanedDataset('xlsx')">Excel (.xlsx)</button>
+                  <button class="rm-export-opt" onclick="exportCleanedDataset('csv')">CSV (.csv)</button>
+                  <button class="rm-export-opt" onclick="exportCleanedDataset('pdf')">PDF (.pdf)</button>
+                  <button class="rm-export-opt" onclick="exportCleanedDataset('docx')">Word (.docx)</button>
+                  <button class="rm-export-opt" onclick="exportCleanedDataset('json')">JSON (.json)</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             CHAT CONTENT
+        ════════════════════════════════════════════════════════════ -->
+        <div class="chat-content">
+          <div id="emptyState" class="empty-state">
+            <div id="noDatasetEmpty" class="empty-state-inner">
+              <div class="empty-state-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/></svg>
+              </div>
+              <h2 class="empty-state-title">Upload a dataset to begin</h2>
+              <p class="empty-state-subtitle">Click the <strong>+</strong> button in the input bar below to upload a CSV or Excel file, then ask questions about your data in plain English.</p>
+            </div>
+            <div id="datasetEmpty" class="empty-state-inner" style="display:none;">
+              <div class="empty-state-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <h2 class="empty-state-title">Ask anything about your dataset</h2>
+              <p class="empty-state-subtitle">Get instant answers, tables, and charts — just type a question below.</p>
+              <div class="quick-chips">
+                <button class="quick-chip" data-prompt="Show me the first 10 rows of this dataset">Show the first 10 rows</button>
+                <button class="quick-chip" data-prompt="Summarize this dataset and highlight any data quality issues">Summarize this dataset</button>
+                <button class="quick-chip" data-prompt="What are the column names and their data types?">List column names and types</button>
+                <button class="quick-chip" data-prompt="Show me a chart of the most common values in this dataset">Chart the top values</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="messagesContainer" class="messages-container"></div>
+          <div class="chat-content-spacer"></div>
+
+          <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.tsv,.txt" style="display:none;" />
+          <div class="input-bar-wrap visible">
+            <div class="input-bar">
+              <button class="input-attach-btn" id="attachBtn" type="button" title="Upload dataset">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <textarea id="chatInput" class="chat-textarea" placeholder="Upload a dataset to get started..." rows="1" autocomplete="off" disabled aria-label="Chat input"></textarea>
+              <button class="send-btn" id="sendBtn" disabled aria-label="Send message">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+            <div class="input-bar-hint">Press + to upload · Enter to send · Shift+Enter for new line</div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Visualization Modal -->
+  <div id="vizModal" class="viz-modal-overlay" style="display:none;">
+    <div class="viz-modal">
+      <div class="viz-modal-header">
+        <div class="viz-modal-title">
+          <span class="viz-modal-title-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 13l3-3 3 3 4-6"/><path d="M7 20h10"/></svg>
+          </span>
+          <span>Build Visualization</span>
+        </div>
+        <button class="viz-modal-close" id="vizModalClose" aria-label="Close"><i class="ti ti-x"></i></button>
+      </div>
+      <div class="viz-modal-body">
+        <div class="viz-modal-controls">
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">Chart Type</label>
+            <div class="viz-chart-type-grid" id="vizChartTypeGrid">
+              <button class="viz-chart-type-btn active" data-type="bar">Bar</button>
+              <button class="viz-chart-type-btn" data-type="line">Line</button>
+              <button class="viz-chart-type-btn" data-type="area">Area</button>
+              <button class="viz-chart-type-btn" data-type="pie">Pie</button>
+              <button class="viz-chart-type-btn" data-type="donut">Donut</button>
+              <button class="viz-chart-type-btn" data-type="scatter">Scatter</button>
+              <button class="viz-chart-type-btn" data-type="histogram">Histogram</button>
+            </div>
+          </div>
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">X Axis <span class="viz-ctrl-sub">(Category / Label)</span></label>
+            <select class="viz-select" id="vizXAxis"></select>
+          </div>
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">Y Axis <span class="viz-ctrl-sub">(Value)</span></label>
+            <select class="viz-select" id="vizYAxis"></select>
+          </div>
+          <div class="viz-ctrl-group">
+            <label class="viz-ctrl-label">Aggregation</label>
+            <div class="viz-agg-row" id="vizAggRow">
+              <button class="viz-agg-btn active" data-agg="sum">Sum</button>
+              <button class="viz-agg-btn" data-agg="avg">Avg</button>
+              <button class="viz-agg-btn" data-agg="count">Count</button>
+              <button class="viz-agg-btn" data-agg="max">Max</button>
+              <button class="viz-agg-btn" data-agg="min">Min</button>
+            </div>
+          </div>
+          <div class="viz-ai-rec" id="vizAIRec" style="display:none;">
+            <span class="viz-ai-rec-badge">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l1.5 6L20 10l-6.5 1.9L12 22l-1.5-10.1L4 10l6.5-2z"/></svg>
+            </span>
+            <span class="viz-ai-rec-badge-text">AI</span>
+            <span class="viz-ai-rec-text" id="vizAIRecText"></span>
+          </div>
+          <button class="viz-generate-btn" id="vizGenerateBtn">
+            <span>Generate Chart</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+        <div class="viz-modal-preview">
+          <div class="viz-preview-empty" id="vizPreviewEmpty">
+            <div class="viz-preview-empty-icon">
+              <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h7"/></svg>
+            </div>
+            <p>Configure and click<br><strong>Generate Chart</strong></p>
+          </div>
+          <div id="vizPreviewChart" style="display:none;">
+            <canvas id="vizModalCanvas"></canvas>
+          </div>
+          <div class="viz-rec-chips" id="vizRecChips" style="display:none;">
+            <span class="viz-rec-chips-label">Suggested:</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="false" role="region" aria-label="Notifications"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+  <script src="{{ url_for('static', filename='main.js') }}"></script>
+</body>
+</html>

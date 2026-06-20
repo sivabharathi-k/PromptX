@@ -1,0 +1,38 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Data (runtime generated)
+backend/data/uploads/*
+!backend/data/uploads/.gitkeep
+backend/data/exports/*
+!backend/data/exports/.gitkeep
+backend/data/logs/*.log
+backend/data/sessions/*
+!backend/data/sessions/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+.qodo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
