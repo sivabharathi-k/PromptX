@@ -44,11 +44,7 @@
           <span class="dataset-badge-status" id="datasetBadgeStatus">● No data</span>
         </div>
 
-        <button class="btn-icon" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
-          </svg>
-        </button>
+
 
         <button class="btn-icon btn-new-chat" id="newChatBtn" title="New dataset" aria-label="Start with a new dataset">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -145,30 +141,28 @@
           <div class="sidebar-section">
             <div class="sidebar-label">Navigation</div>
             <nav class="sidebar-nav">
-              <button class="sidebar-nav-item" data-view="overview" onclick="showDatasetOverview()">
-                <span class="nav-item-icon-box"><i class="ti ti-dashboard"></i></span>
-                <span>Dataset Overview</span>
+              <button class="sidebar-nav-item" data-view="dashboard" id="navDashboard" onclick="showDashboardView()">
+                <span class="nav-item-icon-box"><i class="ti ti-layout-dashboard"></i></span>
+                <span>Dashboard</span>
               </button>
-              <button class="sidebar-nav-item sidebar-sub-toggle" data-view="visualization" onclick="toggleVizSubMenu()">
+              <button class="sidebar-nav-item" data-view="overview" id="navOverview" onclick="showDatasetOverview()">
+                <span class="nav-item-icon-box"><i class="ti ti-database"></i></span>
+                <span>Data Overview</span>
+              </button>
+              <button class="sidebar-nav-item" data-view="custom-chart" id="navCustomChart" onclick="showCustomChartBuilder()">
                 <span class="nav-item-icon-box"><i class="ti ti-chart-bar"></i></span>
-                <span>Visualization</span>
-                <span class="sub-toggle-arrow" id="vizSubArrow">▾</span>
+                <span>Custom Chart Builder</span>
               </button>
-              <div class="sidebar-sub-menu" id="vizSubMenu">
-                <button class="sidebar-nav-item sidebar-sub-item" data-view="auto-viz" onclick="showAutoVisualization()">
-                  <span class="nav-item-icon-box"><i class="ti ti-sparkles"></i></span>
-                  <span>Auto Visualization</span>
-                </button>
-                <button class="sidebar-nav-item sidebar-sub-item" data-view="custom-chart" onclick="showCustomChartBuilder()">
-                  <span class="nav-item-icon-box"><i class="ti ti-tools"></i></span>
-                  <span>Custom Chart Builder</span>
-                </button>
-              </div>
+              <button class="sidebar-nav-item" data-view="insights" id="navInsights" onclick="showInsightsPage()">
+                <span class="nav-item-icon-box"><i class="ti ti-bulb"></i></span>
+                <span>Insights</span>
+              </button>
               <button class="sidebar-nav-item" data-view="replace-missing" onclick="showReplaceMissingPage()">
                 <span class="nav-item-icon-box"><i class="ti ti-replace"></i></span>
                 <span>Replace Null or Empty Values</span>
                 <span class="sidebar-nav-badge" id="replaceMissingBadge" style="display:none;">0</span>
               </button>
+
             </nav>
           </div>
         </div>
@@ -245,34 +239,7 @@
           </div>
         </section>
 
-        <!-- AUTO VISUALIZATION -->
-        <section id="autoVizPage" class="dataset-overview-page" style="display:none;" aria-labelledby="autoVizTitle">
-          <div class="overview-page-header">
-            <div>
-              <div class="overview-eyebrow">One-click chart generation</div>
-              <h1 id="autoVizTitle">Auto Visualization</h1>
-              <p>AI automatically analyzes your dataset and generates the most relevant charts.</p>
-            </div>
-            <button class="overview-close-btn" type="button" onclick="closeAutoVisualization()" aria-label="Return to chat">
-              <i class="ti ti-x"></i>
-            </button>
-          </div>
-          <div id="autoVizLoading" class="overview-loading" style="display:flex;">
-            <span class="overview-spinner"></span>
-            Analyzing dataset and generating recommendations...
-          </div>
-          <div id="autoVizError" class="overview-error" style="display:none;"></div>
-          <div id="autoVizContent" style="display:none;">
-            <div class="viz-column-profile" id="vizColumnProfile"></div>
-            <div class="auto-viz-confidence-legend">
-              <span class="auto-viz-legend-title"><i class="ti ti-info-circle"></i> Confidence score</span>
-              <span class="auto-viz-legend-item"><span class="confidence-badge score-high">85-100%</span> Strong fit for this chart type</span>
-              <span class="auto-viz-legend-item"><span class="confidence-badge score-mid">75-84%</span> Good fit, worth reviewing</span>
-              <span class="auto-viz-legend-item"><span class="confidence-badge score-low"><75%</span> Possible fit, verify before use</span>
-            </div>
-            <div class="auto-viz-grid" id="autoVizGrid"></div>
-          </div>
-        </section>
+        <!-- AUTO VISUALIZATION REMOVED -->
 
         <!-- CUSTOM CHART BUILDER -->
         <section id="customChartPage" class="dataset-overview-page" style="display:none;" aria-labelledby="customChartTitle">
@@ -291,32 +258,30 @@
               <div class="custom-chart-controls">
                 <div class="custom-chart-section">
                   <label class="viz-ctrl-label">Chart Type</label>
-                  <div class="viz-chart-type-grid" id="customChartTypeGrid">
-                    <button class="viz-chart-type-btn active" data-type="bar">Bar</button>
-                    <button class="viz-chart-type-btn" data-type="line">Line</button>
-                    <button class="viz-chart-type-btn" data-type="pie">Pie</button>
-                    <button class="viz-chart-type-btn" data-type="scatter">Scatter</button>
-                    <button class="viz-chart-type-btn" data-type="histogram">Histogram</button>
-                    <button class="viz-chart-type-btn" data-type="area">Area</button>
-                  </div>
+                    <div class="viz-chart-type-grid" id="customChartTypeGrid">
+                      <button class="viz-chart-type-btn" data-type="column">Column Chart</button>
+                      <button class="viz-chart-type-btn" data-type="bar">Bar Chart</button>
+                      <button class="viz-chart-type-btn" data-type="line">Line Chart</button>
+                      <button class="viz-chart-type-btn" data-type="pie">Pie Chart</button>
+                      <button class="viz-chart-type-btn active" data-type="scatter">Scatter Chart</button>
+                    </div>
                 </div>
-                <div class="custom-chart-section">
-                  <label class="viz-ctrl-label">X-Axis <span class="viz-ctrl-sub">(Category / Label)</span></label>
+                <div class="custom-chart-section" id="customXAxisSection">
+                  <label class="viz-ctrl-label" id="customXAxisLabel">X-Axis <span class="viz-ctrl-sub">(Category / Label)</span></label>
                   <select class="viz-select" id="customXAxis"></select>
                 </div>
-                <div class="custom-chart-section">
-                  <label class="viz-ctrl-label">Y-Axis <span class="viz-ctrl-sub">(Value)</span></label>
+                <div class="custom-chart-section" id="customYAxisSection">
+                  <label class="viz-ctrl-label" id="customYAxisLabel">Y-Axis <span class="viz-ctrl-sub">(Value)</span></label>
                   <select class="viz-select" id="customYAxis"></select>
                 </div>
                 <div class="custom-chart-section">
                   <label class="viz-ctrl-label">Aggregation Type</label>
                   <div class="viz-agg-row" id="customAggRow">
                     <button class="viz-agg-btn active" data-agg="sum">Sum</button>
-                    <button class="viz-agg-btn" data-agg="avg">Avg</button>
+                    <button class="viz-agg-btn" data-agg="avg">Average</button>
                     <button class="viz-agg-btn" data-agg="count">Count</button>
-                    <button class="viz-agg-btn" data-agg="max">Max</button>
-                    <button class="viz-agg-btn" data-agg="min">Min</button>
-                    <button class="viz-agg-btn" data-agg="median">Median</button>
+                    <button class="viz-agg-btn" data-agg="max">Maximum</button>
+                    <button class="viz-agg-btn" data-agg="min">Minimum</button>
                   </div>
                 </div>
                 <div id="customControlsNote" class="custom-chart-note" style="display:none;"></div>
@@ -340,13 +305,13 @@
                     <button class="toolbar-btn" onclick="exportCustomChart('docx', this)" title="Export as Word"><i class="ti ti-file-word"></i> Word</button>
                   </div>
                 </div>
-                <div class="custom-chart-canvas-wrap">
-                  <canvas id="customChartCanvas"></canvas>
+                <div class="custom-chart-canvas-wrap" style="position: relative; height: 400px; width: 100%;">
+                  <canvas id="customChartCanvas" style="height: 400px !important; width: 100% !important;"></canvas>
                   <div id="customChartEmpty" class="viz-preview-empty" style="display:flex;">
                     <div class="viz-preview-empty-icon">
                       <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h7"/></svg>
                     </div>
-                    <p>Configure and click<br><strong>Generate Chart</strong></p>
+                    <p>Configure and click<br><strong>Build Chart</strong></p>
                   </div>
                 </div>
                 <div id="customChartInsights" class="chart-insights-panel" style="display:none;">
@@ -357,6 +322,113 @@
             </div>
           </div>
         </section>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             AI INSIGHTS PAGE
+        ════════════════════════════════════════════════════════════ -->
+        <section id="insightsPage" class="dataset-overview-page" style="display:none;" aria-labelledby="insightsTitle">
+          <div class="overview-page-header">
+            <div>
+              <div class="overview-eyebrow">Analytical Engine</div>
+              <h1 id="insightsTitle">AI Insights</h1>
+              <p>Fact-based, precise observations on what happened, ranked by business impact.</p>
+            </div>
+            <button class="overview-close-btn" type="button" onclick="closeInsightsPage()" aria-label="Return to chat">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+
+          <div id="insightsLoading" class="overview-loading" style="display:flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; padding: 4rem 2rem;">
+            <span class="overview-spinner"></span>
+            <div id="insightsLoadingStatus" class="insights-loading-status" style="font-size: 1.1rem; font-weight: 500; color: var(--text-secondary);">Analyzing dataset...</div>
+            <div class="loading-bar-container" style="width: 200px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; position: relative;">
+              <div class="loading-bar-fill" id="insightsLoadingBar" style="width: 10%; height: 100%; background: var(--primary); transition: width 0.3s ease; position: absolute; left: 0; top: 0;"></div>
+            </div>
+          </div>
+
+          <div id="insightsError" class="overview-error" style="display:none; padding: 2rem; border-radius: var(--radius); background: var(--error-bg); border: 1px solid var(--error); color: var(--error); margin: 2rem;"></div>
+
+          <div id="insightsContent" style="display:none; padding: 1.5rem; max-width: 1200px; margin: 0 auto;">
+            <!-- SECTION 1: Dataset Summary -->
+            <div class="insights-section">
+              <div class="insights-hero-card">
+                <div class="insights-hero-header">
+                  <div class="insights-badge"><i class="ti ti-activity"></i> Dataset Profile</div>
+                  <h2>Dataset Summary</h2>
+                </div>
+                <div class="insights-hero-grid">
+                  <div class="insights-hero-col">
+                    <h3>Domain</h3>
+                    <p id="idsDomain">—</p>
+                  </div>
+                  <div class="insights-hero-col">
+                    <h3>Grain</h3>
+                    <p id="idsGrain">—</p>
+                  </div>
+                  <div class="insights-hero-col">
+                    <h3>Total Rows</h3>
+                    <p id="idsRows">—</p>
+                  </div>
+                  <div class="insights-hero-col">
+                    <h3>Date Range</h3>
+                    <p id="idsDateRange">—</p>
+                  </div>
+                  <div class="insights-hero-col">
+                    <h3>Data Quality</h3>
+                    <p id="idsQuality">—</p>
+                  </div>
+                </div>
+                
+                <div class="insights-meta-details-row" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid var(--border); padding-top: 1.2rem;">
+                  <div>
+                    <h3 style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; margin-bottom: 0.5rem; font-weight: 700;">Metrics Detected</h3>
+                    <div id="idsMetrics" style="display: flex; flex-wrap: wrap; gap: 0.5rem;"></div>
+                  </div>
+                  <div>
+                    <h3 style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; margin-bottom: 0.5rem; font-weight: 700;">Dimensions Detected</h3>
+                    <div id="idsDimensions" style="display: flex; flex-wrap: wrap; gap: 0.5rem;"></div>
+                  </div>
+                  <div id="idsQualityFlagsWrap" style="display: none;">
+                    <h3 style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; margin-bottom: 0.5rem; font-weight: 700;">Data Quality Flags</h3>
+                    <ul id="idsQualityFlags" style="margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; color: var(--warning);"></ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SECTION 2: Insights List -->
+            <div class="insights-section">
+              <h2 class="insights-section-title"><i class="ti ti-bulb"></i> Business Intelligence Insights</h2>
+              
+              <!-- Tab Bar Filter -->
+              <div class="insights-tabs-bar" id="insightsTabsBar">
+                <button class="insights-tab-btn active" data-tab="all">
+                  All <span class="insights-tab-badge" id="tab-badge-all">0</span>
+                </button>
+                <button class="insights-tab-btn" data-tab="WHAT_HAPPENED">
+                  What Happened <span class="insights-tab-badge" id="tab-badge-what-happened">0</span>
+                </button>
+                <button class="insights-tab-btn" data-tab="WHY_IT_HAPPENED">
+                  Why it Happened <span class="insights-tab-badge" id="tab-badge-why-it-happened">0</span>
+                </button>
+                <button class="insights-tab-btn" data-tab="WHAT_TO_DO">
+                  What to Do <span class="insights-tab-badge" id="tab-badge-what-to-do">0</span>
+                </button>
+                <button class="insights-tab-btn" data-tab="WHAT_NEXT">
+                  What Next <span class="insights-tab-badge" id="tab-badge-what-next">0</span>
+                </button>
+              </div>
+
+              <div class="insights-findings-grid" id="insightsAgentGrid">
+                <!-- Insights dynamically populated here -->
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+
+
 
         <!-- ═══════════════════════════════════════════════════════════
              REPLACE NULL OR EMPTY VALUES PAGE
@@ -598,13 +670,11 @@
           <div class="viz-ctrl-group">
             <label class="viz-ctrl-label">Chart Type</label>
             <div class="viz-chart-type-grid" id="vizChartTypeGrid">
-              <button class="viz-chart-type-btn active" data-type="bar">Bar</button>
+              <button class="viz-chart-type-btn active" data-type="column">Column</button>
+              <button class="viz-chart-type-btn" data-type="bar">Bar</button>
               <button class="viz-chart-type-btn" data-type="line">Line</button>
-              <button class="viz-chart-type-btn" data-type="area">Area</button>
-              <button class="viz-chart-type-btn" data-type="pie">Pie</button>
-              <button class="viz-chart-type-btn" data-type="donut">Donut</button>
+              <button class="viz-chart-type-btn" data-type="pie">Pie/Doughnut</button>
               <button class="viz-chart-type-btn" data-type="scatter">Scatter</button>
-              <button class="viz-chart-type-btn" data-type="histogram">Histogram</button>
             </div>
           </div>
           <div class="viz-ctrl-group">
@@ -625,13 +695,7 @@
               <button class="viz-agg-btn" data-agg="min">Min</button>
             </div>
           </div>
-          <div class="viz-ai-rec" id="vizAIRec" style="display:none;">
-            <span class="viz-ai-rec-badge">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l1.5 6L20 10l-6.5 1.9L12 22l-1.5-10.1L4 10l6.5-2z"/></svg>
-            </span>
-            <span class="viz-ai-rec-badge-text">AI</span>
-            <span class="viz-ai-rec-text" id="vizAIRecText"></span>
-          </div>
+          <!-- viz-ai-rec removed -->
           <button class="viz-generate-btn" id="vizGenerateBtn">
             <span>Generate Chart</span>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
@@ -644,18 +708,19 @@
             </div>
             <p>Configure and click<br><strong>Generate Chart</strong></p>
           </div>
-          <div id="vizPreviewChart" style="display:none;">
-            <canvas id="vizModalCanvas"></canvas>
+          <div id="vizPreviewChart" style="display:none; position: relative; height: 350px; width: 100%;">
+            <canvas id="vizModalCanvas" style="height: 350px !important; width: 100% !important;"></canvas>
           </div>
-          <div class="viz-rec-chips" id="vizRecChips" style="display:none;">
-            <span class="viz-rec-chips-label">Suggested:</span>
-          </div>
+          <!-- viz-rec-chips removed -->
         </div>
       </div>
     </div>
   </div>
 
   <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="false" role="region" aria-label="Notifications"></div>
+
+  <!-- ═══ ENTERPRISE ZERO-FAILURE ERROR BOUNDARY (MUST BE FIRST) ═══ -->
+  <script src="{{ url_for('static', filename='error_boundary.js') }}"></script>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>

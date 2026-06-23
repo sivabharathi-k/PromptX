@@ -82,7 +82,7 @@ _INTENT_AGGREGATION = {
 
 _INTENT_VISUALIZATION = {
     "plot", "chart", "graph", "visualize", "visualise", "draw", "create",
-    "bar", "pie", "line", "scatter", "histogram", "donut", "area",
+    "bar", "pie", "line", "scatter", "column",
 }
 
 _INTENT_METADATA = {
@@ -175,7 +175,7 @@ _DATASET_PATTERNS = [
     r"\b(row|rows|record|records|entry|entries|column|columns|field|fields)\b",
     r"\b(dataset|table|data|database)\b",
     r"\b(compare|versus|vs\.?|between)\b",
-    r"\b(visuali[sz]e|chart|graph|plot|histogram|scatter|bar|pie)\b",
+    r"\b(visuali[sz]e|chart|graph|plot|scatter|bar|pie|column)\b",
     r"\b(percentage|percent|proportion|share|ratio)\b",
     r"\b(year|month|date|quarter|period)\b",
     r"\b\d+\s*(rows?|records?|entries|items?)\b",

@@ -21,11 +21,10 @@ import numpy as np
 MAX_CATEGORIES_BAR    = 100
 MAX_CATEGORIES_PIE    = 20
 MAX_POINTS_SCATTER    = 5000
-MAX_BINS_HIST         = 40
 MAX_LABEL_LENGTH      = 30  # truncate labels longer than this
 MAX_LINE_POINTS       = 500
 TRUNCATION_SUFFIX     = "…"
-DATE_AGG_THRESHOLD    = 200  # aggregate to monthly if more points than this
+DATE_AGG_THRESHOLD    = 20  # aggregate to monthly if more points than this
 
 
 def _truncate_label(label: str, max_len: int = MAX_LABEL_LENGTH) -> str:
@@ -124,13 +123,11 @@ class VisualizationPreparationService:
         self,
         max_points_scatter: int = MAX_POINTS_SCATTER,
         max_categories_pie: int = MAX_CATEGORIES_PIE,
-        max_bins_hist: int = MAX_BINS_HIST,
         max_categories_bar: int = MAX_CATEGORIES_BAR,
         max_line_points: int = MAX_LINE_POINTS,
     ):
         self.max_points_scatter = max_points_scatter
         self.max_categories_pie = max_categories_pie
-        self.max_bins_hist = max_bins_hist
         self.max_categories_bar = max_categories_bar
         self.max_line_points = max_line_points
 
@@ -148,16 +145,18 @@ class VisualizationPreparationService:
 
         if chart_type == "scatter":
             return self._scatter(df, numeric_cols, categorical_cols)
-        if chart_type == "histogram":
-            return self._histogram(df, numeric_cols)
         if chart_type == "line":
-            return self._line_area(df, date_cols, numeric_cols, area=False)
-        if chart_type == "area":
-            return self._line_area(df, date_cols, numeric_cols, area=True)
+            return self._line_area(df, date_cols, numeric_cols)
+        if chart_type == "column":
+            spec = self._bar(df, categorical_cols, numeric_cols)
+            spec["plotType"] = "column"
+            return spec
         if chart_type == "bar":
-            return self._bar(df, categorical_cols, numeric_cols)
-        if chart_type in ("pie", "donut"):
-            return self._pie_donut(df, categorical_cols, numeric_cols, donut=(chart_type == "donut"))
+            spec = self._bar(df, categorical_cols, numeric_cols)
+            spec["plotType"] = "bar"
+            return spec
+        if chart_type == "pie":
+            return self._pie(df, categorical_cols, numeric_cols)
 
         raise ValueError(f"Unsupported chart type: {chart_type}")
 
@@ -192,36 +191,42 @@ class VisualizationPreparationService:
 
         if chart_type == "scatter":
             if not x_column or not y_column:
-                raise ValueError("Scatter requires xColumn and yColumn")
+                raise ValueError("Scatter Chart requires both xColumn and yColumn")
             return self._scatter_xy(df, x_column, y_column)
 
-        if chart_type == "histogram":
-            col = y_column or x_column
-            if not col:
-                raise ValueError("Histogram requires a column")
-            return self._histogram_col(df, col)
-
-        if chart_type in ("line", "area"):
+        if chart_type == "line":
             if not x_column or not y_column:
-                raise ValueError(f"{chart_type.title()} requires xColumn and yColumn")
+                raise ValueError("Line Chart requires both xColumn and yColumn")
             return self._line_area_xy(
-                df, x_column, y_column, area=(chart_type == "area"),
-                aggregation=aggregation,
-            )
-
-        if chart_type == "bar":
-            if not x_column:
-                raise ValueError("Bar requires xColumn")
-            return self._bar_xy(
                 df, x_column, y_column,
                 aggregation=aggregation,
             )
 
-        if chart_type in ("pie", "donut"):
+        if chart_type == "column":
             if not x_column:
-                raise ValueError(f"{chart_type.title()} requires xColumn")
-            return self._pie_donut_xy(
-                df, x_column, y_column, donut=(chart_type == "donut"),
+                raise ValueError("Column Chart requires xColumn")
+            spec = self._bar_xy(
+                df, x_column, y_column,
+                aggregation=aggregation,
+            )
+            spec["plotType"] = "column"
+            return spec
+
+        if chart_type == "bar":
+            if not x_column:
+                raise ValueError("Bar Chart requires xColumn")
+            spec = self._bar_xy(
+                df, x_column, y_column,
+                aggregation=aggregation,
+            )
+            spec["plotType"] = "bar"
+            return spec
+
+        if chart_type == "pie":
+            if not x_column:
+                raise ValueError("Pie Chart requires xColumn")
+            return self._pie_xy(
+                df, x_column, y_column,
                 aggregation=aggregation,
             )
 
@@ -254,58 +259,25 @@ class VisualizationPreparationService:
             "total_points": len(points),
         }
 
-    # ── Histogram ──────────────────────────────────────────────────────────────
+    # ── Line ───────────────────────────────────────────────────────────────────
 
-    def _histogram(self, df, numeric_cols) -> dict:
-        if not numeric_cols:
-            raise ValueError("Histogram requires a numeric column")
-        return self._histogram_col(df, numeric_cols[0])
-
-    def _histogram_col(self, df: pd.DataFrame, col: str) -> dict:
-        s = pd.to_numeric(df[col], errors="coerce").dropna()
-        if s.empty:
-            raise ValueError("Histogram requires non-empty numeric values")
-
-        # Bounded bins
-        bins = min(self.max_bins_hist, max(5, int(len(s) ** 0.5)))
-        counts, bin_edges = np.histogram(s, bins=bins)
-        bin_edges = [float(e) for e in bin_edges]
-
-        labels = [
-            f"{_format_value(bin_edges[i])}–{_format_value(bin_edges[i + 1])}"
-            for i in range(len(bin_edges) - 1)
-        ]
-        data = [int(c) for c in counts]
-
-        return {
-            "plotType": "bar",
-            "title": f"Distribution of {col}",
-            "xLabel": col,
-            "yLabel": "Count",
-            "series": [{"label": "Frequency", "data": data, "labels": labels}],
-            "total_points": len(s),
-        }
-
-    # ── Line / Area ────────────────────────────────────────────────────────────
-
-    def _line_area(self, df, date_cols, numeric_cols, area: bool) -> dict:
+    def _line_area(self, df, date_cols, numeric_cols) -> dict:
         if not date_cols or not numeric_cols:
-            raise ValueError("Line/Area requires date and numeric columns")
-        return self._line_area_xy(df, date_cols[0], numeric_cols[0], area=area)
+            raise ValueError("Line requires date and numeric columns")
+        return self._line_area_xy(df, date_cols[0], numeric_cols[0])
 
     def _line_area_xy(
         self,
         df: pd.DataFrame,
         xcol: str,
         ycol: str,
-        area: bool,
         aggregation: str = "sum",
     ) -> dict:
         tmp = df[[xcol, ycol]].copy()
         tmp[ycol] = pd.to_numeric(tmp[ycol], errors="coerce")
         tmp = tmp.dropna(subset=[ycol])
         if tmp.empty:
-            raise ValueError("Line/Area requires non-empty date+numeric values")
+            raise ValueError("Line requires non-empty date+numeric values")
 
         try:
             parsed_x = pd.to_datetime(tmp[xcol], errors="coerce")
@@ -323,7 +295,7 @@ class VisualizationPreparationService:
         tmp["_label"] = tmp[xcol].astype(str) if no_year_info else parsed_x
         tmp = tmp.dropna(subset=["_sort_key"])
         if tmp.empty:
-            raise ValueError("Line/Area requires non-empty date+numeric values")
+            raise ValueError("Line requires non-empty date+numeric values")
 
         _LINE_AGG_MAP = {
             "sum": "sum", "avg": "mean", "count": "count",
@@ -351,12 +323,11 @@ class VisualizationPreparationService:
         values = [_safe_float(v) for v in grouped["_value"].tolist()]
 
         return {
-            "plotType": "line" if not area else "area",
+            "plotType": "line",
             "title": f"{aggregation.upper()} of {ycol} over time by {xcol}",
             "xLabel": xcol,
             "yLabel": f"{aggregation.upper()}({ycol})",
             "series": [{"label": ycol, "data": values, "labels": labels}],
-            "area": area,
             "total_points": len(values),
         }
 
@@ -404,21 +375,20 @@ class VisualizationPreparationService:
             "total_categories": len(agg_df),
         }
 
-    # ── Pie / Donut ────────────────────────────────────────────────────────────
+    # ── Pie ────────────────────────────────────────────────────────────────────
 
-    def _pie_donut(self, df, categorical_cols, numeric_cols, donut: bool) -> dict:
+    def _pie(self, df, categorical_cols, numeric_cols) -> dict:
         if not categorical_cols:
-            raise ValueError("Pie/Donut requires a categorical column")
-        return self._pie_donut_xy(
-            df, categorical_cols[0], numeric_cols[0] if numeric_cols else None, donut=donut,
+            raise ValueError("Pie requires a categorical column")
+        return self._pie_xy(
+            df, categorical_cols[0], numeric_cols[0] if numeric_cols else None
         )
 
-    def _pie_donut_xy(
+    def _pie_xy(
         self,
         df: pd.DataFrame,
         xcol: str,
         ycol: str | None,
-        donut: bool,
         aggregation: str = "sum",
     ) -> dict:
         # Pipeline: Aggregate → Cap → Render
@@ -437,7 +407,7 @@ class VisualizationPreparationService:
             title += f" by {aggregation.upper()}({ycol})"
 
         return {
-            "plotType": "pie" if not donut else "donut",
+            "plotType": "pie",
             "title": title,
             "xLabel": xcol,
             "yLabel": ycol or "Count",

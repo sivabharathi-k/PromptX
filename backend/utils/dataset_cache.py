@@ -25,7 +25,6 @@ from backend.services.visualization_profile_service import VisualizationProfileS
 
 _lock = threading.Lock()
 _cache: dict[str, dict] = {}
-_reco_cache: dict[str, dict] = {}
 
 
 def get_active_dataframe_and_profile() -> tuple[pd.DataFrame, dict]:
@@ -52,22 +51,3 @@ def get_active_dataframe_and_profile() -> tuple[pd.DataFrame, dict]:
 
     return df, profile
 
-
-def get_cached_recommendations(compute_fn):
-    """Return the auto-recommendations payload for the active dataset,
-    reusing a cached copy when the underlying SQLite file hasn't changed
-    since it was last computed. `compute_fn` is only called on a cache miss."""
-    db_path = get_active_dataset_info().db_path
-    mtime = os.path.getmtime(db_path) if os.path.exists(db_path) else None
-
-    with _lock:
-        entry = _reco_cache.get(db_path)
-        if entry is not None and entry["mtime"] == mtime:
-            return entry["data"]
-
-    data = compute_fn()
-
-    with _lock:
-        _reco_cache[db_path] = {"mtime": mtime, "data": data}
-
-    return data

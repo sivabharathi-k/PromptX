@@ -46,6 +46,8 @@ const leftSidebarToggle = document.getElementById('leftSidebarToggle');
 const leftSidebarClose  = document.getElementById('leftSidebarClose');
 const sidebarScrim      = document.getElementById('sidebarScrim');
 const datasetOverview   = document.getElementById('datasetOverview');
+const insightsPage      = document.getElementById('insightsPage');
+
 
 const inputBarWrap      = document.querySelector('.input-bar-wrap');
 const chatInput         = document.getElementById('chatInput');
@@ -62,9 +64,7 @@ const vizGenerateBtn    = document.getElementById('vizGenerateBtn');
 const vizPreviewEmpty   = document.getElementById('vizPreviewEmpty');
 const vizPreviewChart   = document.getElementById('vizPreviewChart');
 const vizModalCanvas    = document.getElementById('vizModalCanvas');
-const vizAIRec          = document.getElementById('vizAIRec');
-const vizAIRecText      = document.getElementById('vizAIRecText');
-const vizRecChips       = document.getElementById('vizRecChips');
+// vizAIRec, vizAIRecText, vizRecChips DOM references removed
 
 /* ═══════════════════════════════════════════════════════════════
    UPLOAD — via + button in input bar
@@ -141,6 +141,10 @@ function onDatasetLoaded(data) {
   datasetEmpty.style.display   = 'flex';
   emptyState.style.display     = 'flex';
   messagesContainer.style.display = 'none';
+
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === 'dashboard');
+  });
 
   // Enable input
   chatInput.disabled   = false;
@@ -373,11 +377,387 @@ function exportDatasetOverview() {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   AI INSIGHTS & UTILITY PAGES
+   (Dashboard, Insights, Reports, Settings controllers)
+════════════════════════════════════════════════════════════════ */
+function showDashboardView() {
+  closeAllPages();
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === 'dashboard');
+  });
+  messagesContainer.style.display = 'flex';
+  emptyState.style.display = messagesContainer.children.length ? 'none' : 'flex';
+  inputBarWrap.classList.add('visible');
+  chatInput.focus();
+}
+
+function closeInsightsPage() {
+  if (!insightsPage) return;
+  insightsPage.style.display = 'none';
+  messagesContainer.style.display = 'flex';
+  emptyState.style.display = messagesContainer.children.length ? 'none' : 'flex';
+  inputBarWrap.classList.add('visible');
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
+  chatInput.focus();
+}
+
+
+
+async function showInsightsPage() {
+  if (!state.uploaded) {
+    showToast('Please upload a dataset first.', 'error');
+    return;
+  }
+
+  closeAllPages();
+  insightsPage.style.display = 'block';
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === 'insights');
+  });
+  chatMain.scrollTo({ top: 0, behavior: 'smooth' });
+
+  const loading = document.getElementById('insightsLoading');
+  const content = document.getElementById('insightsContent');
+  const error = document.getElementById('insightsError');
+  const status = document.getElementById('insightsLoadingStatus');
+  const bar = document.getElementById('insightsLoadingBar');
+
+  loading.style.display = 'flex';
+  content.style.display = 'none';
+  error.style.display = 'none';
+
+  bar.style.width = '10%';
+  status.textContent = 'Analyzing dataset...';
+
+  // Sequential status update triggers
+  const stages = [
+    { text: 'Analyzing dataset...', pct: 15 },
+    { text: 'Detecting business context...', pct: 35 },
+    { text: 'Finding key events...', pct: 60 },
+    { text: 'Generating insights...', pct: 80 },
+    { text: 'Building report...', pct: 95 }
+  ];
+
+  let stageIdx = 0;
+  const progressInterval = setInterval(() => {
+    if (stageIdx < stages.length) {
+      status.textContent = stages[stageIdx].text;
+      bar.style.width = stages[stageIdx].pct + '%';
+      stageIdx++;
+    }
+  }, 750);
+
+  try {
+    state.activeInsightsTab = 'all';
+    const insights = state.insights || await fetchInsights();
+    state.insights = insights;
+
+    clearInterval(progressInterval);
+    bar.style.width = '100%';
+
+    setTimeout(() => {
+      loading.style.display = 'none';
+      content.style.display = 'block';
+      renderInsights(insights);
+    }, 300);
+
+  } catch (err) {
+    clearInterval(progressInterval);
+    loading.style.display = 'none';
+    error.textContent = err.message || 'Unable to generate insights.';
+    error.style.display = 'block';
+  }
+}
+
+async function fetchInsights() {
+  const response = await fetch('/insights');
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Failed to retrieve insights from the server.');
+  }
+  return data;
+}
+
+function renderInsights(insights) {
+  // Render Section 1: Dataset Summary
+  const elDomain = document.getElementById('idsDomain');
+  if (elDomain) elDomain.textContent = insights.dataset_summary.domain || 'N/A';
+  document.getElementById('idsGrain').textContent = insights.dataset_summary.grain || 'N/A';
+  document.getElementById('idsRows').textContent = (insights.dataset_summary.row_count || 0).toLocaleString();
+  document.getElementById('idsDateRange').textContent = insights.dataset_summary.date_range || 'N/A';
+  
+  const dqCount = insights.dataset_summary.data_quality_flags ? insights.dataset_summary.data_quality_flags.length : 0;
+  document.getElementById('idsQuality').textContent = dqCount > 0 ? `${dqCount} Flags Raised` : 'Excellent';
+
+  // Render Metrics badges
+  const metricsContainer = document.getElementById('idsMetrics');
+  const detectedMetrics = insights.dataset_summary.metrics || insights.dataset_summary.metrics_detected || [];
+  metricsContainer.innerHTML = (detectedMetrics).map(m => `
+    <span class="overview-type-badge overview-type-num" style="padding: 4px 10px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; background: var(--primary-dim); color: var(--primary);">${escHtml(m)}</span>
+  `).join('');
+
+  // Render Dimensions badges
+  const dimensionsContainer = document.getElementById('idsDimensions');
+  const detectedDimensions = insights.dataset_summary.dimensions || insights.dataset_summary.dimensions_detected || [];
+  dimensionsContainer.innerHTML = (detectedDimensions).map(d => `
+    <span class="overview-type-badge overview-type-text" style="padding: 4px 10px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-secondary);">${escHtml(d)}</span>
+  `).join('');
+
+  // Render Quality flags
+  const flagsWrap = document.getElementById('idsQualityFlagsWrap');
+  const flagsList = document.getElementById('idsQualityFlags');
+  const flags = insights.dataset_summary.data_quality_flags || [];
+  if (flags.length > 0) {
+    flagsWrap.style.display = 'block';
+    flagsList.innerHTML = flags.map(f => `<li>${escHtml(f)}</li>`).join('');
+  } else {
+    flagsWrap.style.display = 'none';
+  }
+
+  // Update tab badge counts
+  const allCount = (insights.insights || []).length;
+  const whatHappenedCount = (insights.insights || []).filter(ins => ins.question === 'WHAT_HAPPENED').length;
+  const whyItHappenedCount = (insights.insights || []).filter(ins => ins.question === 'WHY_IT_HAPPENED').length;
+  const whatToDoCount = (insights.insights || []).filter(ins => ins.question === 'WHAT_TO_DO').length;
+  const whatNextCount = (insights.insights || []).filter(ins => ins.question === 'WHAT_NEXT').length;
+
+  document.getElementById('tab-badge-all').textContent = allCount;
+  document.getElementById('tab-badge-what-happened').textContent = whatHappenedCount;
+  document.getElementById('tab-badge-why-it-happened').textContent = whyItHappenedCount;
+  document.getElementById('tab-badge-what-to-do').textContent = whatToDoCount;
+  document.getElementById('tab-badge-what-next').textContent = whatNextCount;
+
+  // Ensure active tab class matches state
+  const activeTab = state.activeInsightsTab || 'all';
+  const tabButtons = document.querySelectorAll('#insightsTabsBar .insights-tab-btn');
+  tabButtons.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab.toLowerCase() === activeTab.toLowerCase());
+  });
+
+  // Bind tab click listeners if not done already
+  const tabContainer = document.getElementById('insightsTabsBar');
+  if (tabContainer && !tabContainer.dataset.listenerBound) {
+    tabContainer.dataset.listenerBound = 'true';
+    tabContainer.addEventListener('click', (e) => {
+      const btn = e.target.closest('.insights-tab-btn');
+      if (!btn) return;
+      state.activeInsightsTab = btn.dataset.tab;
+      renderInsights(state.insights);
+    });
+  }
+
+  // Filter insights based on active tab
+  const filteredInsights = (insights.insights || []).filter(ins => {
+    if (activeTab === 'all') return true;
+    return ins.question === activeTab;
+  });
+
+  // Render Section 2: Insights Grid
+  const grid = document.getElementById('insightsAgentGrid');
+  
+  if (filteredInsights.length === 0) {
+    grid.innerHTML = `
+      <div style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4rem 2rem; text-align: center; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-secondary);">
+        <i class="ti ti-bulb" style="font-size: 2.5rem; margin-bottom: 0.8rem; color: var(--text-muted);"></i>
+        <h3 style="font-size: 1.1rem; font-weight: 700; margin: 0 0 0.4rem 0;">No insights in this category</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0;">There are no findings matching this specific question.</p>
+      </div>
+    `;
+    if (state.insightsCharts) {
+      state.insightsCharts.forEach(c => c && c.destroy && c.destroy());
+    }
+    state.insightsCharts = [];
+    return;
+  }
+
+  grid.innerHTML = filteredInsights.map((ins, index) => {
+    const sevClass = (ins.severity || 'medium').toLowerCase();
+    
+    // Map question type to border classes and labels
+    let qBorderClass = '';
+    let qLabel = '';
+    if (ins.question === 'WHAT_HAPPENED') {
+      qBorderClass = 'q-what-happened';
+      qLabel = 'What Happened';
+    } else if (ins.question === 'WHY_IT_HAPPENED') {
+      qBorderClass = 'q-why-it-happened';
+      qLabel = 'Why it Happened';
+    } else if (ins.question === 'WHAT_TO_DO') {
+      qBorderClass = 'q-what-to-do';
+      qLabel = 'What to Do';
+    } else if (ins.question === 'WHAT_NEXT') {
+      qBorderClass = 'q-what-next';
+      qLabel = 'What Next';
+    }
+
+    // Map confidence value to badge class
+    const confVal = (ins.confidence || 'medium').toUpperCase();
+    let confClass = 'confidence-medium';
+    if (confVal === 'HIGH') confClass = 'confidence-high';
+    else if (confVal === 'LOW') confClass = 'confidence-low';
+
+    return `
+      <div class="insights-card ${qBorderClass}" style="position: relative; display: flex; flex-direction: column; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); transition: transform 0.2s ease, box-shadow 0.2s ease;">
+        
+        <!-- Header row -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+          <span style="font-size: 11px; font-weight: 700; color: var(--text-muted); font-family: var(--font-mono, monospace);">${escHtml(ins.id)}</span>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <span class="question-badge">${escHtml(qLabel)}</span>
+            <span class="impact-badge badge-${sevClass}">${escHtml(ins.severity)}</span>
+            <span class="confidence-badge ${confClass}">${escHtml(confVal)}</span>
+          </div>
+        </div>
+
+        <!-- Title -->
+        <h3 style="font-size: 15px; font-weight: 700; margin: 0; color: var(--text); line-height: 1.3;">${escHtml(ins.title)}</h3>
+
+        <!-- Description -->
+        <p style="font-size: 13px; line-height: 1.5; color: var(--text-secondary); margin: 0; flex-grow: 1;">${escHtml(ins.description)}</p>
+
+        <!-- Metadata Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; padding: 0.8rem; background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 12px; line-height: 1.4;">
+          <div>
+            <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Metric</span>
+            <strong style="color: var(--text);">${escHtml(ins.metric)}</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Dimension</span>
+            <strong style="color: var(--text);">${escHtml(ins.dimension)}</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Period</span>
+            <strong style="color: var(--text);">${escHtml(ins.period)}</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Magnitude</span>
+            <strong style="color: var(--text);">${escHtml(ins.magnitude)}</strong>
+          </div>
+        </div>
+
+        <!-- Evidence -->
+        <div style="border-top: 1px solid var(--border); padding-top: 0.8rem; font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-bottom: 0.5rem;">
+          <strong>Evidence:</strong> ${escHtml(ins.evidence)}
+        </div>
+
+        <!-- Sparkline Chart -->
+        ${ins.sparkline_data && ins.sparkline_data.length ? `
+        <div class="insights-sparkline-wrap" style="height: 60px; margin-top: auto; border-top: 1px dashed var(--border); padding-top: 0.5rem; position: relative;">
+          <canvas id="sparkline-canvas-${index}" style="width: 100%; height: 100%;"></canvas>
+        </div>
+        ` : ''}
+
+      </div>
+    `;
+  }).join('');
+
+  // Destroy old charts
+  if (state.insightsCharts) {
+    state.insightsCharts.forEach(c => c && c.destroy && c.destroy());
+  }
+  state.insightsCharts = [];
+
+  // Render Sparklines
+  setTimeout(() => {
+    const isDark = document.body.getAttribute('data-theme') === 'dark';
+    
+    filteredInsights.forEach((ins, index) => {
+      if (!ins.sparkline_data || !ins.sparkline_data.length) return;
+      
+      const canvasEl = document.getElementById(`sparkline-canvas-${index}`);
+      if (!canvasEl) return;
+      
+      const ctx = canvasEl.getContext('2d');
+      if (!ctx) return;
+      
+      // Select color based on severity
+      let color = '#3B82F6';
+      if ((ins.severity || '').toLowerCase() === 'high') {
+        color = '#EA4335';
+      } else if ((ins.severity || '').toLowerCase() === 'medium') {
+        color = '#F59E0B';
+      }
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, 50);
+      gradient.addColorStop(0, color + '20');
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+      const runCreateSparkline = () => {
+        try {
+          if (!document.getElementById(`sparkline-canvas-${index}`)) return; // double check element still exists
+          const chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: ins.sparkline_labels || ins.sparkline_data.map((_, i) => String(i)),
+              datasets: [{
+                data: ins.sparkline_data,
+                borderColor: color,
+                borderWidth: 1.75,
+                fill: true,
+                backgroundColor: gradient,
+                pointRadius: 0,
+                pointHitRadius: 8,
+                tension: 0.25
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  enabled: true,
+                  backgroundColor: isDark ? '#171717' : '#FFFFFF',
+                  titleColor: isDark ? '#ECECEC' : '#0D0D0D',
+                  bodyColor: isDark ? '#D1D1D1' : '#353740',
+                  borderColor: isDark ? '#2D2D2D' : '#E5E5E5',
+                  borderWidth: 1,
+                  displayColors: false,
+                  callbacks: {
+                    title: (context) => context[0].label,
+                    label: (context) => `Value: ${context.raw}`
+                  }
+                }
+              },
+              scales: {
+                x: { display: false },
+                y: { display: false }
+              }
+            }
+          });
+          state.insightsCharts.push(chartInstance);
+        } catch (e) {
+          console.error("Sparkline chart creation failed:", e);
+        }
+      };
+
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        runCreateSparkline();
+      } else {
+        window.addEventListener('DOMContentLoaded', runCreateSparkline);
+      }
+    });
+  }, 100);
+}
+
+// Utility to parse basic bold/italic markdown into HTML safely
+function parseSimpleMarkdown(txt) {
+  if (!txt) return '';
+  return txt
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>');
+}
+
+/* ═══════════════════════════════════════════════════════════════
    NEW DATASET / RESET
 ════════════════════════════════════════════════════════════════ */
 function resetToNoDataset() {
   Object.values(state.chartMap).forEach(c => c && c.destroy && c.destroy());
   if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
+  if (state.insightsCharts) {
+    state.insightsCharts.forEach(c => c && c.destroy && c.destroy());
+    state.insightsCharts = [];
+  }
 
   state.chartMap     = {};
   state.tableData    = {};
@@ -386,6 +766,7 @@ function resetToNoDataset() {
   state.querying     = false;
   state.lastSQL      = '';
   state.overview     = null;
+  state.insights     = null;
   state.vizModal     = { msgId: null, chart: null };
   state.previewTruncated = false;
   state.previewRowCount  = 0;
@@ -488,22 +869,7 @@ sendBtn.addEventListener('click', () => {
   if (!state.querying) sendMessage(chatInput.value.trim());
 });
 
-// Theme toggle
-const themeToggle = document.getElementById('themeToggle');
-function toggleTheme(){
-  const body = document.body;
-  const curr = body.getAttribute('data-theme') || 'light';
-  const next = curr === 'dark' ? 'light' : 'dark';
-  body.setAttribute('data-theme', next);
-  try { localStorage.setItem('theme', next); } catch {}
-}
 
-if (themeToggle) themeToggle.addEventListener('click', toggleTheme);
-
-try {
-  const saved = localStorage.getItem('theme');
-  if (saved === 'dark' || saved === 'light') document.body.setAttribute('data-theme', saved);
-} catch {}
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -661,39 +1027,8 @@ function appendAIMsg(data, question) {
   let inner = '';
 
   // ── Text / markdown ──
-  if (data.message && data.type !== 'visualization') {
+  if (data.message) {
     inner += `<div class="ai-summary">${parseMarkdown(data.message)}</div>`;
-  }
-
-  // ── Visualization response ──
-  if (data.type === 'visualization' && data.visualization) {
-    const viz = data.visualization;
-
-    // Chart canvas
-    inner += `
-      <div class="msg-chart-wrap" id="chart-container-${msgId}">
-        <canvas id="chart-${msgId}"></canvas>
-      </div>`;
-
-    // Chart type switcher
-    const allTypes = viz.all_types || [viz.chart_type];
-    if (allTypes.length > 1) {
-      inner += `
-        <div class="viz-switcher" id="switcher-${msgId}">
-          <span class="viz-picker-label">Switch chart:</span>
-          ${allTypes.map(t => `
-            <button class="viz-type-btn${t === viz.chart_type ? ' active' : ''}"
-              onclick="switchVizType('${msgId}', '${t}', this)">${_chartLabel(t)}</button>
-          `).join('')}
-        </div>`;
-    }
-
-    // Data table below chart
-    if (data.columns && data.rows && data.rows.length > 0) {
-      const tableId = msgId + '-t';
-      inner += `<div class="ai-divider"></div>` + buildTableBlock(tableId, data.columns, data.rows, data.total || data.rows.length, question, false);
-      state.tableData[tableId] = { columns: data.columns, allRows: data.rows, page: 0, sql: '' };
-    }
   }
 
   // ── Table result (query / schema / edit) ──
@@ -721,18 +1056,7 @@ function appendAIMsg(data, question) {
     };
   }
 
-  // Render visualization chart
-  if (data.type === 'visualization' && data.visualization) {
-    requestAnimationFrame(() => {
-      const container = document.getElementById(`chart-container-${msgId}`);
-      if (container) {
-        container.dataset.allTypes = JSON.stringify(data.visualization.all_types || []);
-        if (data.visualization.x_column) container.dataset.xCol = data.visualization.x_column;
-        if (data.visualization.y_column) container.dataset.yCol = data.visualization.y_column;
-      }
-      renderChartInMsg(msgId, data.visualization.spec, 'chart-' + msgId);
-    });
-  }
+  // Render visualization chart block removed
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -790,35 +1114,7 @@ function buildTableBlock(msgId, columns, rows, total, question, showToolbar) {
   return statsBar + tableHtml + toolbarHtml;
 }
 
-function smartRecommend(numCols, catCols, dateCols, question) {
-  const q = (question || '').toLowerCase();
-  const recs = [];
-
-  if (dateCols.length >= 1 && numCols.length >= 1) {
-    recs.push({ type: 'line',      icon: '', label: 'Line Chart' });
-    recs.push({ type: 'area',      icon: '', label: 'Area Chart' });
-  } else if (catCols.length >= 1 && numCols.length >= 1) {
-    const uniqueVals = catCols.length; // approximate
-    if (/pie|proportion|share|percent|distribution/i.test(q) || catCols.length === 1) {
-      recs.push({ type: 'pie',   icon: '', label: 'Pie Chart' });
-      recs.push({ type: 'donut', icon: '', label: 'Donut Chart' });
-      recs.push({ type: 'bar',   icon: '', label: 'Bar Chart' });
-    } else {
-      recs.push({ type: 'bar',   icon: '', label: 'Bar Chart' });
-      recs.push({ type: 'pie',   icon: '', label: 'Pie Chart' });
-      recs.push({ type: 'donut', icon: '', label: 'Donut Chart' });
-    }
-  } else if (numCols.length >= 2) {
-    recs.push({ type: 'scatter',   icon: '', label: 'Scatter Plot' });
-    recs.push({ type: 'histogram', icon: '', label: 'Histogram' });
-  } else if (numCols.length >= 1) {
-    recs.push({ type: 'histogram', icon: '', label: 'Histogram' });
-    recs.push({ type: 'bar',       icon: '', label: 'Bar Chart' });
-  }
-
-    // Icons are now rendered as SVG badges elsewhere; keep labels text-only.
-  return recs.slice(0, 4).map(r => ({...r, icon: ''}));
-}
+// smartRecommend removed
 
 function classifyColumns(columns, rows) {
   // Prefer master schema if available (single source of truth)
@@ -1022,82 +1318,7 @@ async function doExport(msgId, fmt, columns, rows) {
   }
 }
 
-function renderInlineChart(msgId, chartType, btnEl) {
-  const td = state.tableData[msgId];
-  if (!td) return;
-
-  // Toggle: clicking same button again hides chart
-  const container = document.getElementById(`inline-chart-${msgId}`);
-  if (!container) return;
-
-  const allBtns = btnEl.closest('.chart-rec-strip').querySelectorAll('.chart-rec-chip');
-  const wasActive = btnEl.classList.contains('active-chart');
-  allBtns.forEach(b => b.classList.remove('active-chart'));
-
-  if (wasActive) {
-    container.innerHTML = '';
-    if (state.chartMap[msgId + '-inline']) {
-      state.chartMap[msgId + '-inline'].destroy();
-      delete state.chartMap[msgId + '-inline'];
-    }
-    return;
-  }
-
-  btnEl.classList.add('active-chart');
-
-  const { numCols, catCols, dateCols } = classifyColumns(td.columns, td.allRows);
-  const spec  = buildSpecFromData(chartType, td.columns, td.allRows, numCols, catCols);
-  const cid   = `inline-canvas-${msgId}`;
-  const allTypes = ['bar','line','area','pie','donut','scatter','histogram'];
-
-  // Build type switcher only for relevant types
-  const { recs: swRecs } = { recs: smartRecommend(numCols, catCols, dateCols, '').slice(0, 5) };
-  const switcherBtns = smartRecommend(numCols, catCols, dateCols, '').slice(0, 5).map(r =>
-      `<button class="inline-ct-btn${r.type === chartType ? ' active' : ''}"
-      onclick="switchInlineChart('${msgId}', '${r.type}', this)">${_chartIconSvg(r.type)} ${r.label}</button>`
-  ).join('');
-
-  container.innerHTML = `
-    <div class="inline-chart-panel">
-      <div class="inline-chart-header">
-        <div class="inline-chart-title">
-          <span>${escHtml(spec.title || chartType + ' Chart')}</span>
-        </div>
-        <div class="inline-chart-type-strip">${switcherBtns}</div>
-      </div>
-      <div class="inline-chart-body">
-        <canvas id="${cid}"></canvas>
-      </div>
-    </div>`;
-
-  requestAnimationFrame(() => {
-    if (state.chartMap[msgId + '-inline']) {
-      state.chartMap[msgId + '-inline'].destroy();
-    }
-    state.chartMap[msgId + '-inline'] = renderChart(cid, spec);
-  });
-}
-
-function switchInlineChart(msgId, newType, btnEl) {
-  const td = state.tableData[msgId];
-  if (!td) return;
-
-  btnEl.closest('.inline-chart-type-strip')
-    .querySelectorAll('.inline-ct-btn').forEach(b => b.classList.remove('active'));
-  btnEl.classList.add('active');
-
-  const { numCols, catCols } = classifyColumns(td.columns, td.allRows);
-  const spec  = buildSpecFromData(newType, td.columns, td.allRows, numCols, catCols);
-  const panel = btnEl.closest('.inline-chart-panel');
-  const title = panel.querySelector('.inline-chart-title span');
-  if (title) title.textContent = spec.title || newType + ' Chart';
-
-  const cid = `inline-canvas-${msgId}`;
-  if (state.chartMap[msgId + '-inline']) {
-    state.chartMap[msgId + '-inline'].destroy();
-  }
-  state.chartMap[msgId + '-inline'] = renderChart(cid, spec);
-}
+// renderInlineChart and switchInlineChart removed
 
 /* ═══════════════════════════════════════════════════════════════
    VIZ MODAL (Power BI–style panel)
@@ -1139,31 +1360,12 @@ function openVizModal(msgId) {
   // Enable y-axis if we have numeric columns
   ySelect.disabled = numCols.length === 0;
 
-  // Show ai recommendation
-  const rec = smartRecommend(numCols, catCols, dateCols, '');
-  if (rec.length) {
-    vizAIRec.style.display = 'flex';
-    vizAIRecText.textContent = `Try: ${rec[0].label}`;
-  } else {
-    vizAIRec.style.display = 'none';
-  }
-
   // Reset preview
   vizPreviewEmpty.style.display = 'flex';
   vizPreviewChart.style.display = 'none';
   if (state.vizModal.chart) {
     state.vizModal.chart.destroy();
     state.vizModal.chart = null;
-  }
-
-  // Show rec chips
-  if (rec.length > 1) {
-    vizRecChips.style.display = 'flex';
-    const chipContainer = document.getElementById('vizRecChips');
-    chipContainer.innerHTML = `<span class="viz-rec-chips-label">Suggested:</span>` +
-      rec.map((r, i) => `<button class="viz-rec-chip-btn${i === 0 ? ' active' : ''}" data-type="${r.type}" onclick="applyRecChart('${r.type}', this)">${r.label}</button>`).join('');
-  } else {
-    vizRecChips.style.display = 'none';
   }
 
   vizModal.style.display = 'flex';
@@ -1184,26 +1386,11 @@ vizModal.addEventListener('click', (e) => {
   if (e.target === vizModal) closeVizModal();
 });
 
-function applyRecChart(chartType, btnEl) {
-  // Update active state
-  document.querySelectorAll('.viz-rec-chip-btn').forEach(b => b.classList.remove('active'));
-  if (btnEl) btnEl.classList.add('active');
-  
-  // Also update chart type grid
-  document.querySelectorAll('#vizChartTypeGrid .viz-chart-type-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.type === chartType);
-  });
-}
-
 // ── Viz modal: chart type selection ──
 document.querySelectorAll('#vizChartTypeGrid .viz-chart-type-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('#vizChartTypeGrid .viz-chart-type-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    // Also update rec chips
-    document.querySelectorAll('.viz-rec-chip-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.type === btn.dataset.type);
-    });
   });
 });
 
@@ -1307,13 +1494,7 @@ function dismissToast(toast) {
 /* ═══════════════════════════════════════════════════════════════
    SIDEBAR NAVIGATION — toggle visualization sub-menu
 ════════════════════════════════════════════════════════════════ */
-function toggleVizSubMenu() {
-  const menu = document.getElementById('vizSubMenu');
-  const arrow = document.getElementById('vizSubArrow');
-  if (!menu) return;
-  menu.classList.toggle('open');
-  if (arrow) arrow.style.transform = menu.classList.contains('open') ? 'rotate(180deg)' : '';
-}
+// toggleVizSubMenu removed
 
 /* ═══════════════════════════════════════════════════════════════
    SHOW / CLOSE PAGE HELPERS
@@ -1329,15 +1510,7 @@ function closeAllPages() {
   inputBarWrap.classList.add('visible');
 }
 
-function closeAutoVisualization() {
-  const page = document.getElementById('autoVizPage');
-  if (page) page.style.display = 'none';
-  messagesContainer.style.display = 'flex';
-  emptyState.style.display = messagesContainer.children.length ? 'none' : 'flex';
-  inputBarWrap.classList.add('visible');
-  document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
-  chatInput.focus();
-}
+// closeAutoVisualization removed
 
 function closeCustomChartBuilder() {
   const page = document.getElementById('customChartPage');
@@ -1349,126 +1522,7 @@ function closeCustomChartBuilder() {
   chatInput.focus();
 }
 
-async function showAutoVisualization() {
-  if (!state.uploaded) { showToast('Please upload a dataset first.', 'error'); return; }
-  closeAllPages();
-  const page = document.getElementById('autoVizPage');
-  page.style.display = 'block';
-  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
-    item.classList.toggle('active', item.dataset.view === 'auto-viz');
-  });
-  chatMain.scrollTo({ top: 0, behavior: 'smooth' });
-
-  const loading = document.getElementById('autoVizLoading');
-  const content = document.getElementById('autoVizContent');
-  const error = document.getElementById('autoVizError');
-  loading.style.display = 'flex';
-  content.style.display = 'none';
-  error.style.display = 'none';
-
-  try {
-    const res = await fetch('/visualize/auto-recommendations', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to generate recommendations.');
-    
-    renderAutoVisualizations(data);
-    loading.style.display = 'none';
-    content.style.display = 'block';
-  } catch (err) {
-    loading.style.display = 'none';
-    error.textContent = err.message || 'Unable to generate auto visualization.';
-    error.style.display = 'block';
-  }
-}
-
-function renderAutoVisualizations(data) {
-  const profile = data.columns_profile || {};
-  const colTypesHtml = [];
-  if (profile.numeric) colTypesHtml.push(`<span class="viz-col-pill viz-col-num">${profile.numeric.length} Numeric</span>`);
-  if (profile.categorical) colTypesHtml.push(`<span class="viz-col-pill viz-col-cat">${profile.categorical.length} Categorical</span>`);
-  if (profile.date) colTypesHtml.push(`<span class="viz-col-pill viz-col-date">${profile.date.length} Date</span>`);
-  document.getElementById('vizColumnProfile').innerHTML = `
-    <div class="viz-col-profile-bar">${colTypesHtml.join('')}</div>
-    <div class="viz-col-names">${[...(profile.numeric || []), ...(profile.categorical || []), ...(profile.date || [])].join(', ')}</div>
-  `;
-
-  const grid = document.getElementById('autoVizGrid');
-  grid.innerHTML = (data.recommendations || []).map((rec, idx) => {
-    const scoreClass = rec.confidence_score >= 85 ? 'score-high' : rec.confidence_score >= 75 ? 'score-mid' : 'score-low';
-    const scoreLabel = rec.confidence_score >= 85 ? `${rec.confidence_score}%` : rec.confidence_score >= 75 ? `${rec.confidence_score}%` : `<75%`;
-    
-    return `
-      <div class="auto-viz-card" data-index="${idx}">
-        <div class="auto-viz-card-header">
-          <div class="auto-viz-card-title">
-            <span class="auto-viz-card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 13l3-3 3 3 4-6"/></svg></span>
-            <div>
-              <strong>${escHtml(rec.reason || 'Chart')}</strong>
-              <div class="auto-viz-card-sub">${escHtml(rec.chart_type)} · X: ${escHtml(rec.x_column)}${rec.y_column ? ' · Y: ' + escHtml(rec.y_column) : ''}</div>
-            </div>
-          </div>
-          <div class="auto-viz-confidence">
-            <span class="confidence-badge ${scoreClass}">${scoreLabel}</span>
-          </div>
-        </div>
-        <div class="auto-viz-card-body">
-          <div class="auto-viz-chart-shell ${rec.chart_type === 'pie' || rec.chart_type === 'donut' ? 'is-pie' : ''}">
-            <div class="auto-viz-chart-mini">
-              <canvas id="auto-viz-canvas-${idx}"></canvas>
-            </div>
-          </div>
-          <div class="auto-viz-card-meta">
-            <span>${rec.chart_type.charAt(0).toUpperCase() + rec.chart_type.slice(1)}</span>
-            <span>X: ${escHtml(rec.x_column)}${rec.y_column ? ` | Y: ${escHtml(rec.y_column)}` : ''}</span>
-          </div>
-          ${(rec.insights || []).length ? `<ul class="auto-viz-insights">${rec.insights.slice(0, 3).map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>` : ''}
-          <div class="auto-viz-card-actions">
-            <button class="toolbar-btn toolbar-btn-primary" onclick="expandAutoViz(${idx})" style="flex:1;justify-content:center;">View Full Chart</button>
-          </div>
-        </div>
-      </div>`;
-  }).join('');
-
-  // Render mini charts after DOM update
-  requestAnimationFrame(() => {
-    (data.recommendations || []).forEach((rec, idx) => {
-      const canvas = document.getElementById(`auto-viz-canvas-${idx}`);
-      if (canvas && rec.spec) {
-        try {
-          renderChart(`auto-viz-canvas-${idx}`, rec.spec);
-        } catch (e) {
-          console.warn('Mini chart render failed:', e);
-        }
-      }
-    });
-  });
-}
-
-// Store expanded auto-viz data for the detail modal
-window._autoVizData = null;
-
-function expandAutoViz(index) {
-  const grid = document.getElementById('autoVizGrid');
-  const card = grid?.children[index];
-  if (!card) return;
-
-  // Open the viz modal with pre-filled data
-  const rec = window._expandedRecs?.[index];
-  if (rec) {
-    openVizModal('master');
-    // Set chart type
-    document.querySelectorAll('#vizChartTypeGrid .viz-chart-type-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.type === rec.chart_type);
-    });
-    // Set axes
-    const xSelect = vizXAxis;
-    const ySelect = vizYAxis;
-    if (rec.x_column && [...xSelect.options].some(o => o.value === rec.x_column)) xSelect.value = rec.x_column;
-    if (rec.y_column && [...ySelect.options].some(o => o.value === rec.y_column)) ySelect.value = rec.y_column;
-    // Generate
-    vizGenerateBtn.click();
-  }
-}
+// showAutoVisualization, renderAutoVisualizations, switchProfileTab, changeAutoVizLayout, filterAndSortAutoViz, expandAutoViz, and _customRenderChart removed
 
 function showCustomChartBuilder() {
   if (!state.uploaded) { showToast('Please upload a dataset first.', 'error'); return; }
@@ -1509,6 +1563,29 @@ function populateCustomChartBuilder() {
     ySelect.innerHTML += `<option value="${escHtml(col)}">${escHtml(col)}</option>`;
   });
   ySelect.disabled = numCols.length === 0;
+
+  // Set initial labels based on default chart type
+  updateCustomChartAxisLabels();
+}
+
+// Update axis labels dynamically based on chart type selection
+function updateCustomChartAxisLabels() {
+  const chartType = document.querySelector('#customChartTypeGrid .active')?.dataset.type || 'bar';
+  const xLabel = document.getElementById('customXAxisLabel');
+  const yLabel = document.getElementById('customYAxisLabel');
+  const xSection = document.getElementById('customXAxisSection');
+  const ySection = document.getElementById('customYAxisSection');
+
+  if (chartType === 'pie') {
+    if (xLabel) xLabel.innerHTML = 'Category Column <span class="viz-ctrl-sub">(Slices)</span>';
+    if (yLabel) yLabel.innerHTML = 'Value Column <span class="viz-ctrl-sub">(Size of each slice)</span>';
+  } else if (chartType === 'scatter') {
+    if (xLabel) xLabel.innerHTML = 'X-Axis Column <span class="viz-ctrl-sub">(Numeric)</span>';
+    if (yLabel) yLabel.innerHTML = 'Y-Axis Column <span class="viz-ctrl-sub">(Numeric)</span>';
+  } else {
+    if (xLabel) xLabel.innerHTML = 'X-Axis Column <span class="viz-ctrl-sub">(Category / Label)</span>';
+    if (yLabel) yLabel.innerHTML = 'Y-Axis Column <span class="viz-ctrl-sub">(Value / Measure)</span>';
+  }
 }
 
 // Custom chart type selection
@@ -1516,19 +1593,55 @@ document.querySelectorAll('#customChartTypeGrid .viz-chart-type-btn').forEach(bt
   btn.addEventListener('click', () => {
     document.querySelectorAll('#customChartTypeGrid .viz-chart-type-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    // Show note for pie/donut (y-axis is effectively count)
+    updateCustomChartAxisLabels();
+    
+    // Show contextual note for pie chart
     const note = document.getElementById('customControlsNote');
-    if (btn.dataset.type === 'pie' || btn.dataset.type === 'donut') {
+    if (btn.dataset.type === 'pie') {
       note.style.display = 'block';
-      note.textContent = 'Pie/Donut charts use count aggregation. Y-axis selection will be used as values.';
-    } else if (btn.dataset.type === 'histogram') {
+      note.textContent = 'Pie Chart: Select a Category column for slices and a Value column for slice sizes.';
+    } else if (btn.dataset.type === 'scatter') {
       note.style.display = 'block';
-      note.textContent = 'Histogram shows value distribution. X-axis becomes the value column.';
+      note.textContent = 'Scatter Chart: Select numeric columns for both X and Y axes.';
     } else {
       note.style.display = 'none';
     }
   });
 });
+
+// Custom chart — validate selections and show clear errors
+function validateCustomChartSelections(chartType, xColumn, yColumn) {
+  const errors = [];
+
+  if (!chartType) {
+    errors.push('Please select a chart type.');
+  }
+
+  if (!xColumn) {
+    errors.push('Please select a column for the X-Axis.');
+  }
+
+  // For non-pie charts, Y-axis is required
+  if (chartType !== 'pie' && !yColumn) {
+    errors.push('Please select a column for the Y-Axis.');
+  }
+
+  // X and Y must be different for non-pie charts
+  if (chartType !== 'pie' && xColumn && yColumn && xColumn === yColumn) {
+    errors.push('X-Axis and Y-Axis must be different columns.');
+  }
+
+  // Check that columns exist in the dataset
+  const columns = state.dataset.columns || [];
+  if (xColumn && !columns.includes(xColumn)) {
+    errors.push(`Column "${escHtml(xColumn)}" does not exist in the dataset.`);
+  }
+  if (yColumn && !columns.includes(yColumn)) {
+    errors.push(`Column "${escHtml(yColumn)}" does not exist in the dataset.`);
+  }
+
+  return errors;
+}
 
 // Custom chart generate
 document.getElementById('customGenerateBtn').addEventListener('click', async () => {
@@ -1541,28 +1654,32 @@ document.getElementById('customGenerateBtn').addEventListener('click', async () 
 
   const warning = document.getElementById('customChartWarning');
 
-  // Validate
-  if (['pie', 'donut'].includes(chartType)) {
-    // Y-axis not strictly needed for pie
-  } else if (chartType === 'histogram') {
-    // X-axis is the value column
-  } else if (!xColumn || !yColumn) {
+  // Validate selections
+  const validationErrors = validateCustomChartSelections(chartType, xColumn, yColumn);
+  if (validationErrors.length > 0) {
     warning.style.display = 'block';
-    warning.textContent = 'Please select both X and Y axes.';
-    setTimeout(() => { warning.style.display = 'none'; }, 3000);
-    return;
-  }
-
-  if (xColumn === yColumn) {
-    warning.style.display = 'block';
-    warning.textContent = 'X and Y axes must be different columns.';
-    setTimeout(() => { warning.style.display = 'none'; }, 3000);
+    warning.innerHTML = validationErrors.map(e => '<div>' + escHtml(e) + '</div>').join('');
+    warning.style.borderLeft = '3px solid var(--error)';
+    warning.style.background = 'var(--error-bg)';
+    warning.style.color = 'var(--error)';
+    warning.style.padding = '10px 14px';
+    warning.style.borderRadius = 'var(--radius)';
+    warning.style.fontSize = '13px';
+    setTimeout(() => {
+      warning.style.display = 'none';
+      warning.style.borderLeft = '';
+      warning.style.background = '';
+      warning.style.color = '';
+      warning.style.padding = '';
+      warning.style.borderRadius = '';
+      warning.style.fontSize = '';
+    }, 5000);
     return;
   }
 
   const genBtn = document.getElementById('customGenerateBtn');
   genBtn.disabled = true;
-  genBtn.innerHTML = iconSpinner() + ' Generating...';
+  genBtn.innerHTML = iconSpinner() + ' Building...';
 
   try {
     const res = await fetch('/visualize/custom-render', {
@@ -1583,7 +1700,7 @@ document.getElementById('customGenerateBtn').addEventListener('click', async () 
     }
     state.chartMap['custom'] = renderChart('customChartCanvas', data.spec);
 
-    // Show insights
+    // Show insights if available
     const insightsPanel = document.getElementById('customChartInsights');
     const insightsBody = document.getElementById('customChartInsightsBody');
     if (data.insights && data.insights.length) {
@@ -1592,10 +1709,26 @@ document.getElementById('customGenerateBtn').addEventListener('click', async () 
     } else {
       insightsPanel.style.display = 'none';
     }
+    
+    showToast('Chart generated successfully.', 'success');
   } catch (err) {
     warning.style.display = 'block';
     warning.textContent = err.message || 'Failed to render chart.';
-    setTimeout(() => { warning.style.display = 'none'; }, 4000);
+    warning.style.borderLeft = '3px solid var(--error)';
+    warning.style.background = 'var(--error-bg)';
+    warning.style.color = 'var(--error)';
+    warning.style.padding = '10px 14px';
+    warning.style.borderRadius = 'var(--radius)';
+    warning.style.fontSize = '13px';
+    setTimeout(() => {
+      warning.style.display = 'none';
+      warning.style.borderLeft = '';
+      warning.style.background = '';
+      warning.style.color = '';
+      warning.style.padding = '';
+      warning.style.borderRadius = '';
+      warning.style.fontSize = '';
+    }, 6000);
   } finally {
     genBtn.disabled = false;
     genBtn.innerHTML = '<i class="ti ti-chart-bar"></i> Build Chart';
@@ -1672,114 +1805,131 @@ async function exportCustomChart(fmt, btnEl) {
 /* ═══════════════════════════════════════════════════════════════
    SWITCH VIZ TYPE (inline)
 ════════════════════════════════════════════════════════════════ */
-function switchVizType(msgId, newType, btnEl) {
-  const container = document.getElementById(`chart-container-${msgId}`);
-  if (!container) return;
-
-  // Update active state
-  const switcher = document.getElementById(`switcher-${msgId}`);
-  if (switcher) {
-    switcher.querySelectorAll('.viz-type-btn').forEach(b => b.classList.remove('active'));
-    btnEl.classList.add('active');
-  }
-
-  const allTypes = JSON.parse(container.dataset.allTypes || '[]');
-  const xCol = container.dataset.xCol;
-  const yCol = container.dataset.yCol;
-
-  // Fetch new spec
-  fetch('/visualize/render', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: newType, xColumn: xCol, yColumn: yCol }),
-  })
-    .then(r => r.json())
-    .then(data => {
-      if (data.spec) {
-        if (state.chartMap[msgId]) {
-          state.chartMap[msgId].destroy();
-        }
-        state.chartMap[msgId] = renderChart('chart-' + msgId, data.spec);
-      }
-    })
-    .catch(console.error);
-}
+// switchVizType removed
 
 /* ═══════════════════════════════════════════════════════════════
    CHART RENDERING UTILITIES
 ════════════════════════════════════════════════════════════════ */
 function _chartLabel(type) {
   const labels = {
-    bar: 'Bar', line: 'Line', area: 'Area', pie: 'Pie',
-    donut: 'Donut', scatter: 'Scatter', histogram: 'Histogram'
+    column: 'Column', bar: 'Bar', line: 'Line', pie: 'Pie/Doughnut', scatter: 'Scatter'
   };
   return labels[type] || type;
 }
 
 function _chartIconSvg(type) {
   const icons = {
-    bar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="14" width="4" height="6"/><rect x="10" y="8" width="4" height="12"/><rect x="16" y="4" width="4" height="16"/></svg>',
+    column: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="14" width="4" height="6"/><rect x="10" y="8" width="4" height="12"/><rect x="16" y="4" width="4" height="16"/></svg>',
+    bar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="6" height="4"/><rect x="4" y="10" width="12" height="4"/><rect x="4" y="16" width="16" height="4"/></svg>',
     line: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 8 12 12 15 16 7 20 11"/></svg>',
-    area: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 18l4-6 4 4 8-8"/><path d="M4 18l4-6 4 4 8-8"/><path d="M4 22h16"/></svg>',
     pie: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 1 10 10"/><path d="M12 2v10"/><path d="M12 22A10 10 0 1 1 12 2"/></svg>',
-    donut: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 1 10 10"/><path d="M12 2v10"/><path d="M12 22A10 10 0 1 1 12 2"/><circle cx="12" cy="12" r="5"/></svg>',
     scatter: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="12" cy="14" r="2"/><circle cx="18" cy="16" r="2"/><circle cx="6" cy="18" r="2"/></svg>',
-    histogram: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="12" width="3" height="8"/><rect x="9" y="8" width="3" height="12"/><rect x="14" y="4" width="3" height="16"/><rect x="19" y="10" width="3" height="10"/></svg>',
   };
   return icons[type] || '';
 }
 
+const PALETTE = [
+  '#2563EB', // blue
+  '#A855F7', // purple
+  '#F59E0B', // amber
+  '#10B981', // emerald
+  '#EF4444', // red
+  '#06B6D4'  // cyan
+];
+
 function renderChart(canvasId, spec) {
+  if (spec && !spec.type && spec.plotType) {
+    spec.type = spec.plotType;
+  }
   const canvas = document.getElementById(canvasId);
-  if (!canvas) return null;
+  if (!canvas) {
+    console.log(`[renderChart] Canvas element #${canvasId} not found in DOM.`);
+    return null;
+  }
+
+  const seriesData = spec && spec.series ? spec.series : [];
+  console.log(`[renderChart] Initializing chart on #${canvasId}. Data:`, seriesData);
+
+  if (!spec || !spec.type) {
+    console.log(`[renderChart] Chart spec or type is missing.`);
+    return null;
+  }
+
+  if (!seriesData.length || !seriesData[0].data || !seriesData[0].data.length) {
+    console.log(`[renderChart] Chart data is empty. Skipping initialization.`);
+    return null;
+  }
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 
-  // Destroy existing chart on this canvas
-  const existing = Chart.getChart(canvasId);
-  if (existing) existing.destroy();
+  // FIX: Only destroy if canvasId is different from stored chartMap key
+  // Chart.getChart() may conflict with state.chartMap — use ONLY state.chartMap
+  if (state.chartMap[canvasId]) {
+    try { state.chartMap[canvasId].destroy(); } catch(e) {}
+    delete state.chartMap[canvasId];
+  }
 
-  if (!spec || !spec.type) return null;
+  const isHorizontalBar = spec.type === 'bar';
+  const isVerticalBar = spec.type === 'column';
+  const chartType = (isHorizontalBar || isVerticalBar) ? 'bar' : spec.type;
 
   const config = {
-    type: spec.type,
+    type: chartType,
     data: {
       labels: spec.labels || [],
-      datasets: (spec.series || []).map((s, i) => ({
-        label: s.label || '',
-        data: s.data || [],
-        backgroundColor: s.backgroundColor || spec.backgroundColor || '#2563EB',
-        borderColor: s.borderColor || spec.borderColor || '#2563EB',
-        borderWidth: s.borderWidth || spec.borderWidth || 2,
-        tension: s.tension || 0,
-        fill: s.fill !== undefined ? s.fill : spec.type === 'line',
-        pointRadius: s.pointRadius || (spec.type === 'scatter' ? 4 : 3),
-      })),
+      datasets: seriesData.map((s, i) => {
+        const defaultColor = PALETTE[i % PALETTE.length];
+        return {
+          label: s.label || '',
+          data: s.data || [],
+          backgroundColor: (() => {
+            if (chartType === 'pie') {
+              return (s.data || []).map((_, idx) => PALETTE[idx % PALETTE.length]);
+            }
+            return s.backgroundColor || spec.backgroundColor || defaultColor;
+          })(),
+          borderColor: (() => {
+            if (chartType === 'pie') {
+              return '#ffffff';
+            }
+            return s.borderColor || spec.borderColor || defaultColor;
+          })(),
+          borderWidth: s.borderWidth || spec.borderWidth || 2,
+          tension: s.tension !== undefined ? s.tension : 0.25,
+          fill: s.fill !== undefined ? s.fill : false,
+          pointRadius: s.pointRadius || (chartType === 'scatter' ? 5 : 3),
+          pointHoverRadius: s.pointHoverRadius || 6,
+        };
+      }),
     },
     options: {
+      indexAxis: isHorizontalBar ? 'y' : 'x',
       responsive: true,
-      maintainAspectRatio: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
       interaction: {
         intersect: false,
         mode: 'index',
       },
       plugins: {
         legend: {
-          display: spec.type === 'pie' || spec.type === 'donut' || (spec.series && spec.series.length > 1),
+          display: chartType === 'pie' || (spec.series && spec.series.length > 1),
           position: 'bottom',
-          labels: { boxWidth: 12, font: { size: 11 } },
+          labels: { boxWidth: 12, font: { size: 11 }, padding: 8 },
         },
         tooltip: {
+          enabled: true,
           backgroundColor: 'rgba(0,0,0,0.8)',
           titleFont: { size: 12 },
           bodyFont: { size: 12 },
           padding: 8,
+          cornerRadius: 4,
         },
       },
-      scales: spec.type !== 'pie' && spec.type !== 'donut' ? {
+      scales: chartType !== 'pie' ? {
         x: {
-          ticks: { font: { size: 10 } },
+          ticks: { font: { size: 10 }, maxRotation: 45 },
           grid: { color: 'rgba(0,0,0,0.06)' },
         },
         y: {
@@ -1792,21 +1942,31 @@ function renderChart(canvasId, spec) {
   };
 
   try {
-    return new Chart(ctx, config);
+    let chartInstance = null;
+    // FIX: Use requestAnimationFrame instead of readyState check for consistency
+    const createFn = () => {
+      try {
+        chartInstance = new Chart(ctx, config);
+        state.chartMap[canvasId] = chartInstance;
+      } catch (err) {
+        console.error(`new Chart() failed for #${canvasId}:`, err);
+      }
+    };
+
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      requestAnimationFrame(createFn);
+    } else {
+      window.addEventListener('DOMContentLoaded', createFn);
+    }
+    // FIX: Return the stored chart instance instead of the local variable
+    return state.chartMap[canvasId] || null;
   } catch (e) {
     console.error('Chart render error:', e);
     return null;
   }
 }
 
-function renderChartInMsg(msgId, spec, canvasId) {
-  requestAnimationFrame(() => {
-    if (state.chartMap[msgId]) {
-      state.chartMap[msgId].destroy();
-    }
-    state.chartMap[msgId] = renderChart(canvasId, spec);
-  });
-}
+// renderChartInMsg removed
 
 /* ═══════════════════════════════════════════════════════════════
    TABLE PAGINATION
@@ -1882,86 +2042,6 @@ function escHtml(str) {
   return d.innerHTML;
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   BUILD SPEC FROM DATA
-════════════════════════════════════════════════════════════════ */
-function buildSpecFromData(chartType, columns, rows, numCols, catCols) {
-  // Simplified spec builder for inline charts
-  const spec = { type: chartType, series: [] };
-
-  if (chartType === 'histogram') {
-    const col = numCols[0] || columns[0];
-    const values = rows.map(r => Number(r[col])).filter(v => !isNaN(v));
-    const bins = 10;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const binWidth = (max - min) / bins || 1;
-    const histogram = Array(bins).fill(0);
-    const labels = [];
-    for (let i = 0; i < bins; i++) {
-      const start = min + i * binWidth;
-      const end = start + binWidth;
-      labels.push(`${start.toFixed(1)}-${end.toFixed(1)}`);
-    }
-    values.forEach(v => {
-      const idx = Math.min(Math.floor((v - min) / binWidth), bins - 1);
-      histogram[idx]++;
-    });
-    spec.labels = labels;
-    spec.series.push({ label: col, data: histogram, backgroundColor: '#2563EB' });
-    spec.title = `Distribution of ${col}`;
-    return spec;
-  }
-
-  if (chartType === 'scatter') {
-    const xCol = numCols[0] || columns[0];
-    const yCol = numCols[1] || columns[1] || numCols[0];
-    const data = rows.map(r => ({ x: Number(r[xCol]), y: Number(r[yCol]) })).filter(p => !isNaN(p.x) && !isNaN(p.y));
-    spec.labels = data.map((_, i) => i);
-    spec.series.push({ label: `${yCol} vs ${xCol}`, data: data.map(p => p.y), backgroundColor: '#2563EB' });
-    spec.title = `${yCol} vs ${xCol}`;
-    return spec;
-  }
-
-  const catCol = catCols[0] || columns[0];
-  const numCol = numCols[0] || (columns[1] || columns[0]);
-
-  if (chartType === 'pie' || chartType === 'donut') {
-    const agg = {};
-    rows.forEach(r => {
-      const key = r[catCol] ?? 'Unknown';
-      const val = Number(r[numCol]) || 0;
-      agg[key] = (agg[key] || 0) + val;
-    });
-    const entries = Object.entries(agg).sort((a, b) => b[1] - a[1]).slice(0, 10);
-    spec.labels = entries.map(e => String(e[0]));
-    spec.series.push({ label: numCol, data: entries.map(e => e[1]), backgroundColor: generateColors(entries.length) });
-    spec.title = `${numCol} by ${catCol}`;
-    return spec;
-  }
-
-  // Bar / Line / Area
-  const agg = {};
-  rows.forEach(r => {
-    const key = r[catCol] ?? 'Unknown';
-    const val = Number(r[numCol]) || 0;
-    agg[key] = (agg[key] || 0) + val;
-  });
-  const entries = Object.entries(agg).sort((a, b) => b[1] - a[1]).slice(0, 15);
-  spec.labels = entries.map(e => String(e[0]));
-  spec.series.push({ label: numCol, data: entries.map(e => e[1]), backgroundColor: '#2563EB' });
-  spec.title = `${numCol} by ${catCol}`;
-
-  return spec;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   GENERATE COLOURS
-════════════════════════════════════════════════════════════════ */
-function generateColors(n) {
-  const palette = ['#2563EB','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#84CC16','#F97316','#6366F1','#14B8A6','#D946EF','#0EA5E9','#22C55E','#EAB308'];
-  return Array.from({length: n}, (_, i) => palette[i % palette.length]);
-}
 
 /* ═══════════════════════════════════════════════════════════════
    MARKDOWN PARSER (lightweight)
