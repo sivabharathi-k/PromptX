@@ -88,9 +88,7 @@ Start your response with `{` and end with `}`.
       "magnitude": "+23.4% / +$142,000",
       "period": "2024-Q3 vs 2024-Q2",
       "evidence": "The exact data observation that proves this insight is true.",
-      "confidence": "HIGH | MEDIUM | LOW",
-      "sparkline_data": [120, 135, 128, 142, 98, 87, 91],
-      "sparkline_labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"]
+      "confidence": "HIGH | MEDIUM | LOW"
     }
   ]
 }

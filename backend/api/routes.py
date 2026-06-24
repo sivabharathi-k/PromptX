@@ -15,11 +15,9 @@ from groq import Groq
 
 from backend.config.settings import GROQ_API_KEY, GROQ_MODEL
 from backend.services.export_service import (
-    to_chart_excel, to_chart_pdf, to_chart_word, to_excel, to_image, to_pdf, to_word,
+    to_excel, to_image, to_pdf, to_word,
 )
-from backend.services.query_service import execute_sql, generate_sql
-from backend.services.visualization_profile_service import VisualizationProfileService
-from backend.services.visualization_preparation_service import VisualizationPreparationService
+from backend.services.query_service import generate_sql, execute_sql
 
 from backend.utils.db_utils import get_schema, load_dataframe
 from backend.utils.file_utils import read_uploaded_file
@@ -27,7 +25,6 @@ from backend.utils.active_dataset_store import (
     load_dataframe_into_active_db, get_active_schema, active_dataset_exists, 
     get_active_connection, get_master_schema, get_master_schema_formatted
 )
-from backend.utils.dataset_cache import get_active_dataframe_and_profile
 from backend.services.relevance_validator import RelevanceValidator, _normalize
 from backend.services.insights.insights_engine import compute_dataset_overview
 from backend.error_handler import safe_route, safe_get
@@ -275,25 +272,7 @@ def generate_data_quality_report() -> str:
         conn.close()
 
 
-def _parse_user_chart_type(question: str) -> str | None:
-    """Extract explicitly requested chart type from the question string."""
-    q = question.lower()
-    mapping = [
-        ("column",    "column"),
-        ("bar",       "bar"),
-        ("line",      "line"),
-        ("pie",       "pie"),
-        ("doughnut",  "pie"),
-        ("donut",     "pie"),
-        ("scatter",   "scatter"),
-    ]
-    for keyword, chart in mapping:
-        if keyword in q:
-            return chart
-    return None
 
-
-# auto_generate_visualization removed
 
 
 @api.route("/schema", methods=["GET"])
@@ -409,22 +388,185 @@ def get_insights():
 
 @api.route("/upload", methods=["POST"])
 def upload():
-    """Validate and store an uploaded CSV file."""
+    """Validate and store an uploaded file (supporting multi-sheet Excel)."""
+    import os
+    file = request.files.get("file")
+    if not file or file.filename == "":
+        return jsonify({"error": "No file selected."}), 400
 
-    df, error = read_uploaded_file(request.files.get("file"))
+    filename = file.filename
+    ext = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
 
-    if error:
-        logger.warning("Upload rejected: %s", error)
-        return jsonify({"error": error}), 400
+    if ext in ("xlsx", "xls"):
+        from backend.utils.active_dataset_store import get_active_dataset_info, reset_active_dataset
+        info = get_active_dataset_info()
+        db_dir = os.path.dirname(info.db_path)
+        
+        # Reset old dataset
+        reset_active_dataset()
+        
+        # Create active temp path
+        temp_workbook_path = os.path.join(db_dir, f"active_temp_workbook.{ext}")
+        
+        # Save Excel workbook
+        try:
+            file.save(temp_workbook_path)
+        except Exception as exc:
+            logger.exception("Failed to save uploaded workbook: %s", exc)
+            return jsonify({"error": f"Failed to save workbook: {exc}"}), 500
 
-    filename = request.files.get("file").filename
+        try:
+            engine = "openpyxl" if ext == "xlsx" else "xlrd"
+            xls = pd.ExcelFile(temp_workbook_path, engine=engine)
+            sheets = xls.sheet_names
+        except Exception as exc:
+            logger.exception("Failed to parse Excel sheet list: %s", exc)
+            return jsonify({"error": f"Failed to parse Excel file: {exc}"}), 400
 
-    # Wipe every trace of the previous dataset before storing the new one.
-    session.clear()
-    session["file_name"] = filename
-    session.modified     = True
+        if len(sheets) > 1:
+            sid = session.get("active_dataset_session_id")
+            session.clear()
+            if sid:
+                session["active_dataset_session_id"] = sid
+            session["temp_workbook_path"] = temp_workbook_path
+            session["file_name"] = filename
+            session.modified = True
+            
+            return jsonify({
+                "success": True,
+                "multi_sheet": True,
+                "sheets": sheets,
+                "filename": filename
+            })
+        else:
+            # Single-sheet Excel
+            try:
+                df = pd.read_excel(
+                    temp_workbook_path,
+                    sheet_name=0,
+                    engine=engine,
+                    na_values=None,
+                )
+                from backend.utils.file_utils import _validate_dataframe
+                df, error = _validate_dataframe(df, filename)
+                if error:
+                    return jsonify({"error": error}), 400
+            except Exception as exc:
+                logger.exception("Failed to parse single-sheet Excel: %s", exc)
+                return jsonify({"error": f"Failed to parse Excel sheet: {exc}"}), 400
 
-    # SQLite is the source of truth (also stores master schema)
+            sid = session.get("active_dataset_session_id")
+            session.clear()
+            if sid:
+                session["active_dataset_session_id"] = sid
+            session["file_name"] = filename
+            session.modified = True
+
+            load_dataframe_into_active_db(df, if_exists="replace")
+
+            # Set initial query results preview
+            session["last_result"] = df.to_json(orient="split")
+            session["last_query_sql"] = "SELECT * FROM dataset"
+            session.modified = True
+
+            # Get the master schema that was just detected
+            master_schema = get_master_schema()
+
+            PREVIEW_LIMIT = 50
+            preview_rows = _clean_rows(df.head(PREVIEW_LIMIT).to_dict(orient="records"))
+            preview_row_count = len(preview_rows)
+            preview_truncated = len(df) > PREVIEW_LIMIT
+
+            return jsonify({
+                "success": True,
+                "multi_sheet": False,
+                "message": f"'{filename}' uploaded successfully.",
+                "rows":    len(df),
+                "columns": list(df.columns),
+                "schema":  master_schema,
+                "preview_rows": preview_rows,
+                "preview_row_count": preview_row_count,
+                "preview_truncated": preview_truncated,
+            })
+    else:
+        # CSV / TSV / TXT
+        from backend.utils.active_dataset_store import reset_active_dataset
+        reset_active_dataset()
+
+        df, error = read_uploaded_file(file)
+        if error:
+            logger.warning("Upload rejected: %s", error)
+            return jsonify({"error": error}), 400
+
+        sid = session.get("active_dataset_session_id")
+        session.clear()
+        if sid:
+            session["active_dataset_session_id"] = sid
+        session["file_name"] = filename
+        session.modified = True
+
+        load_dataframe_into_active_db(df, if_exists="replace")
+
+        # Set initial query results preview
+        session["last_result"] = df.to_json(orient="split")
+        session["last_query_sql"] = "SELECT * FROM dataset"
+        session.modified = True
+
+        # Get the master schema that was just detected
+        master_schema = get_master_schema()
+
+        PREVIEW_LIMIT = 50
+        preview_rows = _clean_rows(df.head(PREVIEW_LIMIT).to_dict(orient="records"))
+        preview_row_count = len(preview_rows)
+        preview_truncated = len(df) > PREVIEW_LIMIT
+
+        return jsonify({
+            "success": True,
+            "multi_sheet": False,
+            "message": f"'{filename}' uploaded successfully.",
+            "rows":    len(df),
+            "columns": list(df.columns),
+            "schema":  master_schema,
+            "preview_rows": preview_rows,
+            "preview_row_count": preview_row_count,
+            "preview_truncated": preview_truncated,
+        })
+
+
+@api.route("/api/select-sheet", methods=["POST"])
+def select_sheet():
+    """Load a selected sheet from a multi-sheet Excel file into SQLite database."""
+    import os
+    body = request.json or {}
+    sheet_name = body.get("sheet_name")
+    filename = body.get("filename")
+
+    if not sheet_name or not filename:
+        return jsonify({"error": "Missing sheet_name or filename."}), 400
+
+    temp_workbook_path = session.get("temp_workbook_path")
+    if not temp_workbook_path or not os.path.exists(temp_workbook_path):
+        return jsonify({"error": "Uploaded workbook not found or expired. Please upload the file again."}), 400
+
+    ext = temp_workbook_path.rsplit(".", 1)[1].lower() if "." in temp_workbook_path else ""
+    try:
+        engine = "openpyxl" if ext == "xlsx" else "xlrd"
+        df = pd.read_excel(
+            temp_workbook_path,
+            sheet_name=sheet_name,
+            engine=engine,
+            na_values=None,
+        )
+        from backend.utils.file_utils import _validate_dataframe
+        df, error = _validate_dataframe(df, filename)
+        if error:
+            return jsonify({"error": error}), 400
+    except Exception as exc:
+        logger.exception("Failed to parse sheet: %s", exc)
+        return jsonify({"error": f"Failed to parse selected sheet: {exc}"}), 400
+
+    # Wipe existing data and load the sheet into SQLite
+    from backend.utils.active_dataset_store import load_dataframe_into_active_db, get_master_schema
     load_dataframe_into_active_db(df, if_exists="replace")
 
     # Set initial query results preview
@@ -436,25 +578,229 @@ def upload():
     master_schema = get_master_schema()
 
     logger.info(
-        "Dataset uploaded — file: '%s' | rows: %d | columns: %d | cols: %s",
-        filename, len(df), len(df.columns), list(df.columns),
+        "Excel sheet loaded — file: '%s' | sheet: '%s' | rows: %d | columns: %d",
+        filename, sheet_name, len(df), len(df.columns),
     )
 
-    # Build preview rows (first 50 rows) for frontend chart builder
+    # Build preview rows (first 50 rows) for dashboard/chat preview
     PREVIEW_LIMIT = 50
     preview_rows = _clean_rows(df.head(PREVIEW_LIMIT).to_dict(orient="records"))
     preview_row_count = len(preview_rows)
     preview_truncated = len(df) > PREVIEW_LIMIT
 
     return jsonify({
-        "message": f"'{filename}' uploaded successfully.",
-        "rows":    len(df),
+        "success": True,
+        "rows": len(df),
         "columns": list(df.columns),
-        "schema":  master_schema,
+        "schema": master_schema,
         "preview_rows": preview_rows,
         "preview_row_count": preview_row_count,
         "preview_truncated": preview_truncated,
     })
+
+
+@api.route("/api/dashboard/data", methods=["POST"])
+def get_dashboard_data():
+    """Get aggregated KPIs, recommended charts, insights, and paginated/searched/sorted drill-down details table."""
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset loaded. Please upload a dataset first."}), 400
+
+    body = request.json or {}
+    filters = body.get("filters", {})
+    page = int(body.get("page", 1))
+    page_size = int(body.get("page_size", 20))
+    search_query = body.get("search", "").strip()
+    sort_column = body.get("sort_column")
+    sort_dir = body.get("sort_dir", "ASC").upper()
+
+    from backend.utils.active_dataset_store import get_master_schema, get_active_connection, TABLE_NAME
+    from backend.services.recommender_service import get_recommended_charts, build_where_clause
+    from backend.services.insight_engine_service import generate_dashboard_insights
+
+    schema = get_master_schema() or {}
+
+    try:
+        conn = get_active_connection()
+        where_clause, params = build_where_clause(filters, schema)
+        
+        # Apply search filtering across all TEXT and MIXED columns
+        if search_query:
+            search_parts = []
+            for col, dtype in schema.items():
+                if dtype in ("TEXT", "MIXED"):
+                    search_parts.append(f'"{col}" LIKE ?')
+                    params.append(f"%{search_query}%")
+            if search_parts:
+                if where_clause:
+                    where_clause += " AND (" + " OR ".join(search_parts) + ")"
+                else:
+                    where_clause = "WHERE (" + " OR ".join(search_parts) + ")"
+
+        cur = conn.cursor()
+        
+        # Count total matching rows
+        cur.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} {where_clause}", params)
+        rows_count = cur.fetchone()[0]
+
+        # KPIs list
+        kpis = [
+            {"id": "total_records", "label": "Total Records", "value": f"{rows_count:,}"}
+        ]
+
+        num_cols = [c for c, t in schema.items() if t == "NUM"]
+        if num_cols:
+            first_num = num_cols[0]
+            cur.execute(f"SELECT SUM(\"{first_num}\"), AVG(\"{first_num}\") FROM {TABLE_NAME} {where_clause}", params)
+            sum_val, avg_val = cur.fetchone()
+            kpis.append({
+                "id": "sum_value",
+                "label": f"Total {first_num.replace('_', ' ').title()}",
+                "value": f"{sum_val:,.2f}" if sum_val is not None else "0.00"
+            })
+            kpis.append({
+                "id": "avg_value",
+                "label": f"Average {first_num.replace('_', ' ').title()}",
+                "value": f"{avg_val:,.2f}" if avg_val is not None else "0.00"
+            })
+
+        text_cols = [c for c, t in schema.items() if t == "TEXT"]
+        if text_cols and num_cols:
+            first_text = text_cols[0]
+            first_num = num_cols[0]
+            cur.execute(f"""
+                SELECT "{first_text}", SUM("{first_num}") as tot
+                FROM {TABLE_NAME}
+                {where_clause}
+                GROUP BY "{first_text}"
+                ORDER BY tot DESC
+                LIMIT 1
+            """, params)
+            row = cur.fetchone()
+            if row:
+                kpis.append({
+                    "id": "top_category",
+                    "label": f"Top {first_text.replace('_', ' ').title()}",
+                    "value": f"{row[0]} ({row[1]:,.2f})"
+                })
+
+        # Pagination & Sorting for drill-down table
+        order_by_clause = ""
+        if sort_column and sort_column in schema:
+            if sort_dir not in ("ASC", "DESC"):
+                sort_dir = "ASC"
+            order_by_clause = f'ORDER BY "{sort_column}" {sort_dir}'
+
+        offset = (page - 1) * page_size
+        
+        cur.execute(f"""
+            SELECT * FROM {TABLE_NAME}
+            {where_clause}
+            {order_by_clause}
+            LIMIT {page_size} OFFSET {offset}
+        """, params)
+
+        colnames = [desc[0] for desc in cur.description]
+        table_raw_rows = [dict(zip(colnames, r)) for r in cur.fetchall()]
+        cleaned_table_rows = _clean_rows(table_raw_rows)
+        
+        conn.close()
+    except Exception as exc:
+        logger.exception("Failed to query SQLite for dashboard data: %s", exc)
+        kpis = [{"id": "total_records", "label": "Total Records", "value": "Error"}]
+        rows_count = 0
+        colnames = []
+        cleaned_table_rows = []
+
+    # Get charts & insights (based on dashboard filters, not page search)
+    chart_recs = get_recommended_charts(schema, filters)
+    insights = generate_dashboard_insights(schema, filters)
+
+    return jsonify({
+        "success": True,
+        "rows_count": rows_count,
+        "kpis": kpis,
+        "chart_recommendations": chart_recs,
+        "insights": insights,
+        "table_data": {
+            "columns": colnames,
+            "rows": cleaned_table_rows,
+            "total_count": rows_count,
+            "page": page,
+            "page_size": page_size
+        }
+    })
+
+
+@api.route("/api/dashboard/export", methods=["POST"])
+def export_dashboard_data():
+    """Export the filtered, searched, and sorted dashboard dataset."""
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset loaded."}), 400
+
+    body = request.json or {}
+    filters = body.get("filters", {})
+    search_query = body.get("search", "").strip()
+    sort_column = body.get("sort_column")
+    sort_dir = body.get("sort_dir", "ASC").upper()
+    export_format = body.get("format", "csv").lower()
+
+    from backend.utils.active_dataset_store import get_master_schema, get_active_connection, TABLE_NAME
+    from backend.services.recommender_service import build_where_clause
+
+    schema = get_master_schema() or {}
+
+    try:
+        conn = get_active_connection()
+        where_clause, params = build_where_clause(filters, schema)
+        
+        # Apply search filtering
+        if search_query:
+            search_parts = []
+            for col, dtype in schema.items():
+                if dtype in ("TEXT", "MIXED"):
+                    search_parts.append(f'"{col}" LIKE ?')
+                    params.append(f"%{search_query}%")
+            if search_parts:
+                if where_clause:
+                    where_clause += " AND (" + " OR ".join(search_parts) + ")"
+                else:
+                    where_clause = "WHERE (" + " OR ".join(search_parts) + ")"
+
+        order_by_clause = ""
+        if sort_column and sort_column in schema:
+            if sort_dir not in ("ASC", "DESC"):
+                sort_dir = "ASC"
+            order_by_clause = f'ORDER BY "{sort_column}" {sort_dir}'
+
+        df = pd.read_sql_query(f"""
+            SELECT * FROM {TABLE_NAME}
+            {where_clause}
+            {order_by_clause}
+        """, conn, params=params)
+        conn.close()
+    except Exception as exc:
+        logger.exception("Failed to query SQLite for dashboard export: %s", exc)
+        return jsonify({"error": f"Failed to export data: {exc}"}), 500
+
+    # Export using backend services
+    try:
+        if export_format == "xlsx":
+            from backend.services.export_service import to_excel
+            buffer = to_excel(df)
+            mimetype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = "dashboard_export.xlsx"
+        else:
+            # Default to csv
+            from backend.services.export_service import to_csv
+            buffer = to_csv(df)
+            mimetype = "text/csv"
+            filename = "dashboard_export.csv"
+
+        logger.info("Dashboard export served — format: %s | rows: %d", export_format, len(df))
+        return send_file(buffer, as_attachment=True, download_name=filename, mimetype=mimetype)
+    except Exception as exc:
+        logger.exception("Export failed: %s", exc)
+        return jsonify({"error": f"Failed to generate file: {exc}"}), 500
 
 
 @api.route("/query", methods=["POST"])
@@ -631,316 +977,7 @@ def classify_intent(question: str, schema: str) -> dict:
 
 
 
-    try:
-        df      = pd.read_json(io.StringIO(session["last_result"]), orient="split")
-        profile = VisualizationProfileService().profile(df)
-        rec     = ChartRecommender().recommend(
-            df, profile,
-            question=question,
-            user_requested_chart=user_chart_type or None,
-        )
-        return jsonify(rec)
-    except Exception as e:
-        logger.exception("Recommendation failed: %s", str(e))
-        return jsonify({"error": f"Recommendation failed: {str(e)}"}), 500
 
-
-@api.route("/visualize/profile", methods=["POST"])
-def visualize_profile():
-    """Return column profile of the last result for axis selection."""
-    if not active_dataset_exists():
-        return jsonify({"error": "No active dataset."}), 400
-
-    if "last_result" not in session:
-        return jsonify({"error": "No results yet. Run a query first."}), 400
-
-    try:
-        df = pd.read_json(io.StringIO(session["last_result"]), orient="split")
-        profile_service = VisualizationProfileService()
-        profile = profile_service.profile(df)
-        column_profile = {col: profile["columns"][col] for col in df.columns}
-        return jsonify({
-            "columns": list(df.columns),
-            "columnProfile": column_profile,
-            "total": len(df),
-        })
-    except Exception as e:
-        logger.exception("Profile failed: %s", str(e))
-        return jsonify({"error": f"Profile failed: {str(e)}"}), 500
-
-
-@api.route("/visualize/render", methods=["POST"])
-def visualize_render():
-    """Render a chart spec from last result with explicit X/Y columns."""
-    if not active_dataset_exists():
-        return jsonify({"error": "No active dataset."}), 400
-
-    if "last_result" not in session:
-        return jsonify({"error": "No results yet. Run a query first."}), 400
-
-    body = request.json or {}
-    chart_type = body.get("type", "bar")
-    x_column = body.get("xColumn")
-    y_column = body.get("yColumn")
-
-    try:
-        df = pd.read_json(io.StringIO(session["last_result"]), orient="split")
-        profile_service = VisualizationProfileService()
-        prep_service = VisualizationPreparationService()
-        profile = profile_service.profile(df)
-
-        if x_column and x_column not in df.columns:
-            x_column = df.columns[0]
-        if y_column and y_column not in df.columns:
-            y_column = None
-
-        spec = prep_service.render_with_axes(
-            df=df, chart_type=chart_type, profile=profile,
-            x_column=x_column, y_column=y_column
-        )
-        return jsonify({"spec": spec})
-    except Exception as e:
-        logger.exception("Render failed: %s", str(e))
-        return jsonify({"error": f"Render failed: {str(e)}"}), 500
-
-
-@api.route("/visualize/custom-render", methods=["POST"])
-def visualize_custom_render():
-    """Render a chart spec from the full dataset with aggregation pipeline.
-    
-    Supports all 5 chart types: column, bar, line, pie, scatter.
-    Validates all inputs before rendering.
-    """
-    if not active_dataset_exists():
-        return jsonify({"error": "No active dataset. Please upload a dataset first."}), 400
-
-    body = request.json or {}
-    chart_type = (body.get("chart_type", "") or "").strip().lower()
-    x_column = (body.get("xColumn", "") or "").strip()
-    y_column = (body.get("yColumn", "") or "").strip()
-    aggregation = (body.get("aggregation", "") or "").strip().lower()
-
-    # ── Validate chart type ──
-    valid_chart_types = {"column", "bar", "line", "pie", "scatter"}
-    if not chart_type:
-        return jsonify({"error": "Chart type is required. Please select a chart type from: Column, Bar, Line, Pie, or Scatter."}), 400
-    if chart_type not in valid_chart_types:
-        return jsonify({"error": f"Unsupported chart type '{chart_type}'. Choose: Column, Bar, Line, Pie, or Scatter."}), 400
-
-    # ── Validate aggregation ──
-    valid_aggs = {"sum", "avg", "count", "max", "min"}
-    if not aggregation:
-        return jsonify({"error": "Aggregation type is required. Choose: Sum, Average, Count, Maximum, or Minimum."}), 400
-    if aggregation not in valid_aggs:
-        return jsonify({"error": f"Unsupported aggregation '{aggregation}'. Choose: Sum, Average, Count, Maximum, or Minimum."}), 400
-
-    try:
-        df, profile = get_active_dataframe_and_profile()
-
-        if df.empty:
-            return jsonify({"error": "The dataset is empty. Please upload a valid dataset with data."}), 400
-
-        dataset_rows = len(df)
-        prep_service = VisualizationPreparationService()
-        cols = list(df.columns)
-
-        # ── Validate columns exist ──
-        if x_column and x_column not in cols:
-            return jsonify({"error": f"X-Axis column '{x_column}' not found in the dataset. Available columns: {', '.join(cols)}"}), 400
-        if y_column and y_column not in cols:
-            return jsonify({"error": f"Y-Axis column '{y_column}' not found in the dataset. Available columns: {', '.join(cols)}"}), 400
-
-        # ── Validate required columns per chart type ──
-        if not x_column:
-            return jsonify({"error": "Please select an X-Axis column (Category/Label)."}), 400
-
-        if chart_type != "pie" and not y_column:
-            return jsonify({"error": f"{chart_type.capitalize()} Chart requires both X-Axis and Y-Axis columns. Please select a Y-Axis column."}), 400
-
-        if chart_type != "pie" and x_column == y_column:
-            return jsonify({"error": "X-Axis and Y-Axis must be different columns. They cannot be the same."}), 400
-
-        # For scatter, ensure both columns have numeric data
-        if chart_type == "scatter":
-            num_profile_cols = [c for c, p in profile.get("columns", {}).items() if p.get("kind") == "numeric"]
-            if x_column not in num_profile_cols:
-                # Try to coerce and check
-                pass  # Let the service handle it with a clear error
-
-        spec = prep_service.render_with_axes(
-            df=df, chart_type=chart_type, profile=profile,
-            x_column=x_column, y_column=y_column,
-            aggregation=aggregation,
-        )
-
-        professional_insights = _build_professional_insights(
-            spec, df, chart_type, x_column, y_column, aggregation, dataset_rows
-        )
-
-        return jsonify({
-            "spec": spec,
-            "insights": professional_insights,
-            "columns": cols,
-            "total": len(df),
-        })
-    except ValueError as ve:
-        # Catch validation errors from the preparation service
-        logger.warning("Custom render validation error: %s", str(ve))
-        return jsonify({"error": str(ve)}), 400
-    except Exception as e:
-        logger.exception("Custom render failed: %s", str(e))
-        return jsonify({"error": f"Chart generation failed: {str(e)}"}), 500
-
-
-def _build_professional_insights(spec, df, chart_type, x_col, y_col, agg, total_rows):
-    """Build professional-grade chart insights with summary, trends, and recommendations."""
-    insights = []
-    try:
-        data_values = []
-        labels = []
-        if spec.get("series") and spec["series"][0]:
-            data_values = spec["series"][0].get("data", [])
-            labels = spec["series"][0].get("labels", spec.get("labels", []))
-
-        if not data_values:
-            return ["Chart Summary: No data available for analysis."]
-
-        if chart_type == "scatter":
-            return _build_scatter_insights(data_values, x_col, y_col, total_rows)
-
-        values = [float(v) for v in data_values if v is not None]
-        if not values:
-            return ["Chart Summary: No numeric values to analyze."]
-
-        max_val = max(values)
-        min_val = min(values)
-        sum_val = sum(values)
-        avg_val = sum_val / len(values)
-
-        max_idx = values.index(max_val)
-        min_idx = values.index(min_val)
-        max_label = labels[max_idx] if max_idx < len(labels) else "—"
-        min_label = labels[min_idx] if min_idx < len(labels) else "—"
-
-        chart_labels = {
-            "column": "Column Chart",
-            "bar": "Bar Chart",
-            "line": "Line Chart",
-            "pie": "Pie Chart",
-            "scatter": "Scatter Plot"
-        }
-        chart_name = chart_labels.get(chart_type, chart_type.upper())
-        insights.append(f"Summary: {chart_name} showing {agg.upper()}({y_col or 'Count'}) by {x_col}. "
-                       f"Analyzing {len(values):,} data points from {total_rows:,} total rows.")
-
-        if max_val == min_val and len(values) >= 2:
-            insights.append(f"Distribution: All {len(values)} categories have the same value "
-                           f"({_fmt_value(max_val)})")
-        else:
-            if max_label and max_val > 0:
-                if sum_val > 0:
-                    pct = round(100 * max_val / sum_val, 1)
-                    insights.append(f"Highest: {max_label} with {_fmt_value(max_val)} ({pct}% of total)")
-                else:
-                    insights.append(f"Highest: {max_label} ({_fmt_value(max_val)})")
-
-            if min_label:
-                insights.append(f"Lowest: {min_label} ({_fmt_value(min_val)})")
-
-        if chart_type in ("column", "bar", "pie") and sum_val > 0 and len(values) >= 3:
-            sorted_vals = sorted(values, reverse=True)
-            top3_sum = sum(sorted_vals[:3])
-            top3_pct = round(100 * top3_sum / sum_val, 1)
-            others_pct = round(100 - top3_pct, 1)
-            insights.append(f"Concentration: Top 3 categories contribute **{top3_pct}%** "
-                           f"of total (others: {others_pct}%)")
-            if max_val > 0 and min_val > 0:
-                ratio = round(max_val / min_val, 1) if min_val > 0 else float('inf')
-                if ratio > 10:
-                    insights.append(f"Variance: Large variance detected — highest is {ratio}x the lowest")
-
-        if chart_type == "line" and len(values) >= 3:
-            first_half = sum(values[:len(values)//2]) / max(len(values[:len(values)//2]), 1)
-            second_half = sum(values[len(values)//2:]) / max(len(values[len(values)//2:]), 1)
-            if second_half > first_half * 1.05:
-                change = round(100 * (second_half - first_half) / max(first_half, 0.001), 1)
-                insights.append(f"Trend: Upward trend — values increased by ~{change}%")
-            elif first_half > second_half * 1.05:
-                change = round(100 * (first_half - second_half) / max(first_half, 0.001), 1)
-                insights.append(f"Trend: Downward trend — values decreased by ~{change}%")
-            else:
-                insights.append(f"Trend: Relatively stable over the period")
-
-        insights.append(f"Average: {_fmt_value(avg_val)} across {len(values)} categories")
-        insights.append(f"Total: {_fmt_value(sum_val)}")
-
-        if chart_type == "pie" and len(values) >= 3:
-            top_pct = round(100 * max_val / sum_val, 1)
-            if top_pct > 50:
-                insights.append(f"Dominance: '{max_label}' alone accounts for {top_pct}% — "
-                               f"consider a Bar Chart for better comparison")
-            elif top_pct < 10 and len(values) > 5:
-                insights.append(f"Distribution: Values are relatively evenly distributed")
-
-        if chart_type == "pie" and len(labels) > 8:
-            insights.append(f"Recommendation: Pie chart has {len(labels)} slices — consider Column or Bar Chart for clarity")
-        elif chart_type in ("column", "bar") and len(labels) > 25:
-            insights.append(f"Recommendation: {len(labels)} categories may be crowded — consider a different layout for clarity")
-        elif chart_type == "line" and x_col:
-            insights.append(f"Recommendation: Use this trend to identify seasonal patterns or anomalies in {x_col}")
-        else:
-            insights.append(f"Recommendation: Use aggregation and axis selection to focus on the most impactful categories")
-
-        return insights[:10]
-
-    except Exception:
-        return ["Chart Summary: Analysis completed on the selected data."]
-
-
-def _build_scatter_insights(points, x_col, y_col, total_rows):
-    """Build insights for scatter plots, whose data points are {x, y} dicts."""
-    try:
-        xs = [float(p["x"]) for p in points if p and p.get("x") is not None and p.get("y") is not None]
-        ys = [float(p["y"]) for p in points if p and p.get("x") is not None and p.get("y") is not None]
-        if not xs:
-            return ["Chart Summary: No numeric values to analyze."]
-
-        insights = [
-            f"Summary: Scatter Plot showing {y_col} vs {x_col}. "
-            f"Analyzing {len(xs):,} data points from {total_rows:,} total rows.",
-            f"{x_col} range: {_fmt_value(min(xs))} to {_fmt_value(max(xs))} "
-            f"(mean: {_fmt_value(sum(xs) / len(xs))})",
-            f"{y_col} range: {_fmt_value(min(ys))} to {_fmt_value(max(ys))} "
-            f"(mean: {_fmt_value(sum(ys) / len(ys))})",
-        ]
-
-        if len(xs) >= 5:
-            corr = pd.Series(xs).corr(pd.Series(ys))
-            if pd.notna(corr):
-                direction = "positive" if corr > 0 else "negative"
-                strength = "strong" if abs(corr) > 0.7 else "moderate" if abs(corr) > 0.3 else "weak"
-                insights.append(f"Correlation: {strength.capitalize()} {direction} correlation "
-                                f"(r={corr:.2f}) between {x_col} and {y_col}")
-
-        insights.append("Recommendation: Add a trend line to quantify the correlation strength")
-        return insights[:10]
-    except Exception:
-        return ["Chart Summary: Analysis completed on the selected data."]
-
-
-def _fmt_value(v):
-    """Format values for display in insights."""
-    try:
-        fv = float(v)
-        if abs(fv) >= 1_000_000:
-            return f"{fv / 1_000_000:.2f}M"
-        if abs(fv) >= 1_000:
-            return f"{fv / 1_000:.1f}K"
-        if fv == int(fv):
-            return f"{int(fv):,}"
-        return f"{fv:.2f}"
-    except:
-        return str(v)
 
 
 @api.route("/download-excel", methods=["GET"])
@@ -1093,52 +1130,7 @@ def download(fmt: str):
     return _download(fmt)
 
 
-_CHART_EXPORT_FORMATS = {
-    "pdf":  ("chart.pdf",  "application/pdf"),
-    "docx": ("chart.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    "xlsx": ("chart.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-}
 
-
-@api.route("/visualize/export-chart/<fmt>", methods=["POST"])
-def export_chart(fmt: str):
-    """Export a rendered chart (image + insights + underlying data) as PDF, Word or Excel."""
-    fmt = fmt.lower()
-    if fmt not in _CHART_EXPORT_FORMATS:
-        return jsonify({"error": f"Unsupported chart export format '{fmt}'. Choose: pdf, docx, xlsx."}), 400
-
-    body = request.get_json(silent=True) or {}
-    title        = (body.get("title") or "Chart").strip()
-    x_label      = body.get("x_label") or ""
-    y_label      = body.get("y_label") or ""
-    series_label = body.get("series_label") or ""
-    labels       = body.get("labels") or []
-    data         = body.get("data") or []
-    insights     = body.get("insights") or []
-    image_data   = body.get("image") or ""
-
-    if "," not in image_data or not image_data.startswith("data:image"):
-        return jsonify({"error": "A chart image is required to export."}), 400
-
-    try:
-        image_bytes = base64.b64decode(image_data.split(",", 1)[1])
-    except (ValueError, TypeError):
-        return jsonify({"error": "Invalid chart image data."}), 400
-
-    try:
-        if fmt == "pdf":
-            buffer = to_chart_pdf(title, image_bytes, x_label, y_label, labels, data, series_label, insights)
-        elif fmt == "docx":
-            buffer = to_chart_word(title, image_bytes, x_label, y_label, labels, data, series_label, insights)
-        else:
-            buffer = to_chart_excel(title, image_bytes, x_label, y_label, labels, data, series_label, insights)
-
-        filename, mimetype = _CHART_EXPORT_FORMATS[fmt]
-        logger.info("Chart export served — format: %s | title: %s", fmt, title)
-        return send_file(buffer, as_attachment=True, download_name=filename, mimetype=mimetype)
-    except Exception as e:
-        logger.exception("Chart export failed: %s", str(e))
-        return jsonify({"error": f"Chart export failed: {str(e)}"}), 500
 
 
 # ── Internal Helpers ───────────────────────────────────────────

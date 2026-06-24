@@ -6,14 +6,11 @@ const state = {
   querying:    false,
   dataset:     { name: '', rows: 0, columns: [] },
   masterSchema: {},   // { column_name: "NUM"|"TEXT"|"DATE" } - single source of truth
-  chartMap:    {},   // id -> Chart instance
   tableData:   {},   // msgId -> { columns, allRows, page, sql }
   sidebarOpen: true,
   leftSidebarOpen: true,
   lastSQL:     '',
   overview:    null,
-  // Viz modal state
-  vizModal:    { msgId: null, chart: null },
   _toastTimers: {}, // track toast auto-dismiss timers
   // Replace missing values state
   rmColumns: [],
@@ -21,6 +18,17 @@ const state = {
   rmSelectedMethod: null,
   rmSortAsc: false,
   rmBeforeTotal: 0,
+  // Dashboard state
+  dashboardFilters: {},
+  dashboardPage: 1,
+  dashboardSearch: '',
+  dashboardSortColumn: null,
+  dashboardSortDir: 'ASC',
+  dashboardTableTotalCount: 0,
+  tempWorkbookFilename: '',
+  tempWorkbookSheets: [],
+  activeSheet: null,
+  allSheets: [],
 };
 
 const PAGE_SIZE = 20;
@@ -52,19 +60,6 @@ const insightsPage      = document.getElementById('insightsPage');
 const inputBarWrap      = document.querySelector('.input-bar-wrap');
 const chatInput         = document.getElementById('chatInput');
 const sendBtn           = document.getElementById('sendBtn');
-
-// Viz modal elements
-const vizModal          = document.getElementById('vizModal');
-const vizModalClose     = document.getElementById('vizModalClose');
-const vizChartTypeGrid  = document.getElementById('vizChartTypeGrid');
-const vizXAxis          = document.getElementById('vizXAxis');
-const vizYAxis          = document.getElementById('vizYAxis');
-const vizAggRow         = document.getElementById('vizAggRow');
-const vizGenerateBtn    = document.getElementById('vizGenerateBtn');
-const vizPreviewEmpty   = document.getElementById('vizPreviewEmpty');
-const vizPreviewChart   = document.getElementById('vizPreviewChart');
-const vizModalCanvas    = document.getElementById('vizModalCanvas');
-// vizAIRec, vizAIRecText, vizRecChips DOM references removed
 
 /* ═══════════════════════════════════════════════════════════════
    UPLOAD — via + button in input bar
@@ -99,17 +94,49 @@ async function doUpload(file) {
       return;
     }
 
-    state.dataset        = { name: file.name, rows: data.rows, columns: data.columns };
-    state.uploaded       = true;
-    state.masterSchema   = data.schema || {};
-    state.previewTruncated = !!data.preview_truncated;
-    state.previewRowCount  = data.preview_row_count || 0;
+    if (data.multi_sheet) {
+      // Workbook with multiple sheets: prompt user to pick one
+      state.tempWorkbookFilename = data.filename;
+      state.tempWorkbookSheets   = data.sheets;
+      state.activeSheet          = null;
+      state.allSheets            = data.sheets;
 
-    onDatasetLoaded(data);
-    showToast(`"${file.name}" uploaded — ${data.rows.toLocaleString()} rows, ${data.columns.length} columns.`, 'success');
+      // Hide all standard pages and empty states
+      closeAllPages();
+      noDatasetEmpty.style.display = 'none';
+      datasetEmpty.style.display   = 'none';
+      messagesContainer.style.display = 'none';
+      emptyState.style.display     = 'flex';
 
-  } catch {
+      const sheetSelectEmpty = document.getElementById('multiSheetSelectEmpty');
+      if (sheetSelectEmpty) {
+        sheetSelectEmpty.style.display = 'flex';
+        const selector = document.getElementById('uploadSheetSelector');
+        if (selector) {
+          selector.innerHTML = data.sheets.map(sh => `<option value="${escHtml(sh)}">${escHtml(sh)}</option>`).join('');
+        }
+      }
+      showToast(`"${file.name}" uploaded successfully. Please select a sheet to analyze.`, 'info');
+    } else {
+      // Single sheet or CSV
+      state.dataset        = { name: file.name, rows: data.rows, columns: data.columns };
+      state.uploaded       = true;
+      state.masterSchema   = data.schema || {};
+      state.previewTruncated = !!data.preview_truncated;
+      state.previewRowCount  = data.preview_row_count || 0;
+      state.activeSheet    = null;
+      state.allSheets      = [];
+
+      const sheetSelectEmpty = document.getElementById('multiSheetSelectEmpty');
+      if (sheetSelectEmpty) sheetSelectEmpty.style.display = 'none';
+
+      onDatasetLoaded(data);
+      showToast(`"${file.name}" uploaded — ${data.rows.toLocaleString()} rows, ${data.columns.length} columns.`, 'success');
+    }
+
+  } catch (err) {
     showToast('Upload failed. Please check your connection.', 'error');
+    console.error(err);
   } finally {
     attachBtn.disabled = false;
     attachBtn.innerHTML = _attachIcon;
@@ -141,6 +168,26 @@ function onDatasetLoaded(data) {
   datasetEmpty.style.display   = 'flex';
   emptyState.style.display     = 'flex';
   messagesContainer.style.display = 'none';
+
+  // Enable dashboard navigation item in sidebar
+  const navDb = document.getElementById('navDashboard');
+  if (navDb) {
+    navDb.classList.remove('disabled');
+    navDb.disabled = false;
+    navDb.removeAttribute('title');
+  }
+
+  // Populate dashboard sheet selector if multiple sheets are available
+  const dbSheetWrap = document.getElementById('dbSheetSelectWrap');
+  const dbSheetSelector = document.getElementById('dbSheetSelector');
+  if (state.allSheets && state.allSheets.length > 1) {
+    dbSheetWrap.style.display = 'block';
+    dbSheetSelector.innerHTML = state.allSheets.map(sh => `
+      <option value="${escHtml(sh)}" ${sh === state.activeSheet ? 'selected' : ''}>${escHtml(sh)}</option>
+    `).join('');
+  } else {
+    dbSheetWrap.style.display = 'none';
+  }
 
   document.querySelectorAll('.sidebar-nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.view === 'dashboard');
@@ -381,14 +428,616 @@ function exportDatasetOverview() {
    (Dashboard, Insights, Reports, Settings controllers)
 ════════════════════════════════════════════════════════════════ */
 function showDashboardView() {
+  if (!state.uploaded) return;
+
   closeAllPages();
+  
+  // Hide chat containers to render full dashboard SPA
+  messagesContainer.style.display = 'none';
+  emptyState.style.display = 'none';
+  inputBarWrap.classList.remove('visible');
+
+  const dbPage = document.getElementById('dashboardPage');
+  if (dbPage) dbPage.style.display = 'block';
+
   document.querySelectorAll('.sidebar-nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.view === 'dashboard');
   });
+
+  // Set header dataset label
+  const dbDatasetName = document.getElementById('dbDatasetName');
+  if (dbDatasetName) {
+    dbDatasetName.textContent = state.activeSheet
+      ? `${state.dataset.name} (${state.activeSheet})`
+      : state.dataset.name;
+  }
+
+  // Reset page, sorting, search for clean entry
+  state.dashboardFilters = {};
+  state.dashboardPage = 1;
+  state.dashboardSearch = "";
+  state.dashboardSortColumn = null;
+  state.dashboardSortDir = "ASC";
+  
+  const searchInput = document.getElementById('dbTableSearchInput');
+  if (searchInput) searchInput.value = "";
+
+  fetchDashboardData();
+}
+
+function closeDashboardPage() {
+  const dbPage = document.getElementById('dashboardPage');
+  if (dbPage) dbPage.style.display = 'none';
+
   messagesContainer.style.display = 'flex';
   emptyState.style.display = messagesContainer.children.length ? 'none' : 'flex';
   inputBarWrap.classList.add('visible');
+
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
   chatInput.focus();
+}
+
+async function loadSelectedExcelSheet() {
+  const selector = document.getElementById('uploadSheetSelector');
+  const loadBtn = document.getElementById('uploadSheetBtn');
+  if (!selector || !loadBtn) return;
+
+  const sheetName = selector.value;
+  if (!sheetName) {
+    showToast('Please select a sheet.', 'error');
+    return;
+  }
+
+  loadBtn.disabled = true;
+  const originalHtml = loadBtn.innerHTML;
+  loadBtn.innerHTML = iconSpinner() + ' Loading Worksheet...';
+
+  try {
+    const res = await fetch('/api/select-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: state.tempWorkbookFilename,
+        sheet_name: sheetName
+      })
+    });
+
+    const response = await res.json();
+    if (!res.ok || !response.success) {
+      showToast(response.error || 'Failed to load sheet.', 'error');
+      return;
+    }
+
+    state.dataset = { name: state.tempWorkbookFilename, rows: response.rows, columns: response.columns };
+    state.uploaded = true;
+    state.masterSchema = response.schema || {};
+    state.previewTruncated = !!response.preview_truncated;
+    state.previewRowCount = response.preview_row_count || 0;
+    state.activeSheet = sheetName;
+    state.allSheets = state.tempWorkbookSheets;
+
+    const sheetSelectEmpty = document.getElementById('multiSheetSelectEmpty');
+    if (sheetSelectEmpty) sheetSelectEmpty.style.display = 'none';
+
+    onDatasetLoaded(response);
+    showToast(`"${state.tempWorkbookFilename}" (${sheetName}) loaded — ${response.rows.toLocaleString()} rows.`, 'success');
+
+  } catch (err) {
+    showToast('Failed to load worksheet.', 'error');
+    console.error(err);
+  } finally {
+    loadBtn.disabled = false;
+    loadBtn.innerHTML = originalHtml;
+  }
+}
+
+async function onDashboardSheetChanged() {
+  const dbSheetSelector = document.getElementById('dbSheetSelector');
+  if (!dbSheetSelector) return;
+  const sheetName = dbSheetSelector.value;
+  if (!sheetName) return;
+
+  const loading = document.getElementById('dbLoading');
+  const content = document.getElementById('dbContent');
+  const error = document.getElementById('dbError');
+
+  loading.style.display = 'flex';
+  content.style.display = 'none';
+  error.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/select-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: state.dataset.name,
+        sheet_name: sheetName
+      })
+    });
+
+    const response = await res.json();
+    if (!res.ok || !response.success) {
+      showToast(response.error || 'Failed to switch sheet.', 'error');
+      loading.style.display = 'none';
+      error.textContent = response.error || 'Failed to switch sheet.';
+      error.style.display = 'block';
+      return;
+    }
+
+    state.dataset = { name: state.dataset.name, rows: response.rows, columns: response.columns };
+    state.masterSchema = response.schema || {};
+    state.previewTruncated = !!response.preview_truncated;
+    state.previewRowCount = response.preview_row_count || 0;
+    state.activeSheet = sheetName;
+
+    // Reset components & caches
+    state.overview = null;
+    state.insights = null;
+    populateOverview(response);
+
+    state.dashboardFilters = {};
+    state.dashboardPage = 1;
+    state.dashboardSearch = "";
+    state.dashboardSortColumn = null;
+    state.dashboardSortDir = "ASC";
+    
+    const searchInput = document.getElementById('dbTableSearchInput');
+    if (searchInput) searchInput.value = "";
+
+    showToast(`Switched sheet to "${sheetName}" — ${response.rows.toLocaleString()} rows.`, 'success');
+    await fetchDashboardData();
+
+  } catch (err) {
+    showToast('Failed to switch sheet.', 'error');
+    console.error(err);
+    loading.style.display = 'none';
+    error.textContent = 'Failed to switch sheet.';
+    error.style.display = 'block';
+  }
+}
+
+async function fetchDashboardData() {
+  const loading = document.getElementById('dbLoading');
+  const content = document.getElementById('dbContent');
+  const error = document.getElementById('dbError');
+
+  if (content.style.display === 'none') {
+    loading.style.display = 'flex';
+  }
+
+  try {
+    const res = await fetch('/api/dashboard/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filters: state.dashboardFilters || {},
+        page: state.dashboardPage || 1,
+        page_size: 20,
+        search: state.dashboardSearch || "",
+        sort_column: state.dashboardSortColumn,
+        sort_dir: state.dashboardSortDir || "ASC"
+      })
+    });
+
+    const response = await res.json();
+    if (!res.ok || !response.success) {
+      throw new Error(response.error || 'Failed to load dashboard data.');
+    }
+
+    renderDashboard(response);
+
+    loading.style.display = 'none';
+    content.style.display = 'block';
+    error.style.display = 'none';
+  } catch (err) {
+    console.error(err);
+    loading.style.display = 'none';
+    error.textContent = err.message || 'An error occurred while loading dashboard metrics.';
+    error.style.display = 'block';
+  }
+}
+
+function renderDashboard(data) {
+  // 1. Render KPIs
+  const icons = {
+    "total_records": "ti-list-numbers",
+    "sum_value": "ti-sum",
+    "avg_value": "ti-math-avg",
+    "top_category": "ti-tags"
+  };
+  
+  const deck = document.getElementById('dbKpiDeck');
+  if (deck) {
+    deck.innerHTML = data.kpis.map(kpi => `
+      <div class="overview-stat-card" style="display: flex; align-items: center; gap: 12px; padding: 16px;">
+        <div class="metric-icon-box" style="width: 42px; height: 42px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; background: var(--primary-dim); color: var(--primary); font-size: 18px;">
+          <i class="ti ${icons[kpi.id] || 'ti-calculator'}"></i>
+        </div>
+        <div>
+          <span class="stat-label" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; color: var(--text-muted); display: block;">${escHtml(kpi.label)}</span>
+          <strong class="stat-value" style="font-size: 18px; font-weight: 700; color: var(--text); display: block; margin-top: 2px;">${escHtml(kpi.value)}</strong>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // 2. Render Active Filters
+  const filtersBar = document.getElementById('dbFiltersBar');
+  const chipsContainer = document.getElementById('dbActiveFilterChips');
+  if (filtersBar && chipsContainer) {
+    const filterEntries = Object.entries(state.dashboardFilters);
+    if (filterEntries.length > 0) {
+      filtersBar.style.display = 'flex';
+      chipsContainer.innerHTML = filterEntries.map(([col, val]) => `
+        <span class="db-filter-chip">
+          <span>${escHtml(col)}: ${escHtml(Array.isArray(val) ? val.join(', ') : val)}</span>
+          <button onclick="removeDashboardFilter('${escHtml(col)}')"><i class="ti ti-x"></i></button>
+        </span>
+      `).join('');
+    } else {
+      filtersBar.style.display = 'none';
+    }
+  }
+
+  // 3. Render Insights
+  const insightsList = document.getElementById('dbInsightsList');
+  if (insightsList) {
+    const getInsightClass = (text) => {
+      const t = text.toLowerCase();
+      if (t.includes('quality') || t.includes('missing') || t.includes('duplicate')) return 'insight-quality';
+      if (t.includes('outlier')) return 'insight-outliers';
+      if (t.includes('concentration') || t.includes('dominant')) return 'insight-concentration';
+      if (t.includes('correlation')) return 'insight-correlation';
+      if (t.includes('trend')) return 'insight-trend';
+      return '';
+    };
+
+    const getInsightIcon = (text) => {
+      const t = text.toLowerCase();
+      if (t.includes('quality') || t.includes('missing') || t.includes('duplicate')) return 'ti-alert-triangle';
+      if (t.includes('outlier')) return 'ti-chart-candle';
+      if (t.includes('concentration') || t.includes('dominant')) return 'ti-chart-pie';
+      if (t.includes('correlation')) return 'ti-chart-dots';
+      if (t.includes('trend')) return 'ti-trending-up';
+      return 'ti-info-circle';
+    };
+
+    insightsList.innerHTML = data.insights.map(ins => `
+      <div class="db-insight-card ${getInsightClass(ins)}">
+        <i class="ti ${getInsightIcon(ins)}"></i>
+        <div>${escHtml(ins)}</div>
+      </div>
+    `).join('');
+  }
+
+  // 4. Render Recommended Charts
+  renderDashboardCharts(data.chart_recommendations);
+
+  // 5. Render Source Table
+  const tableHead = document.getElementById('dbTableHead');
+  const tableBody = document.getElementById('dbTableBody');
+  if (tableHead && tableBody && data.table_data) {
+    state.dashboardTableTotalCount = data.table_data.total_count;
+
+    // Head
+    const headers = data.table_data.columns.map(col => {
+      const isSorted = state.dashboardSortColumn === col;
+      const icon = isSorted ? (state.dashboardSortDir === 'ASC' ? ' ▲' : ' ▼') : '';
+      return `<th onclick="onDashboardTableSort('${escHtml(col)}')" style="cursor: pointer; user-select: none;">
+        ${escHtml(col)}${icon}
+      </th>`;
+    }).join('');
+    tableHead.innerHTML = `<tr>${headers}</tr>`;
+
+    // Body
+    if (data.table_data.rows.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="${data.table_data.columns.length}" style="text-align: center; color: var(--text-muted); padding: 2rem;">No matching entries found</td></tr>`;
+    } else {
+      tableBody.innerHTML = data.table_data.rows.map(row => `
+        <tr>
+          ${data.table_data.columns.map(col => `<td>${escHtml(String(row[col] !== undefined && row[col] !== null ? row[col] : ''))}</td>`).join('')}
+        </tr>
+      `).join('');
+    }
+
+    // Pagination Indicators
+    const totalCountEl = document.getElementById('dbTableTotalCount');
+    const pageIndicatorEl = document.getElementById('dbTablePageIndicator');
+    const prevBtn = document.getElementById('dbTablePrevBtn');
+    const nextBtn = document.getElementById('dbTableNextBtn');
+
+    if (totalCountEl) {
+      const start = data.table_data.total_count === 0 ? 0 : ((data.table_data.page - 1) * data.table_data.page_size) + 1;
+      const end = Math.min(data.table_data.page * data.table_data.page_size, data.table_data.total_count);
+      totalCountEl.textContent = `Showing ${start} to ${end} of ${data.table_data.total_count.toLocaleString()} entries`;
+    }
+
+    const maxPages = Math.max(1, Math.ceil(data.table_data.total_count / data.table_data.page_size));
+    if (pageIndicatorEl) {
+      pageIndicatorEl.textContent = `Page ${data.table_data.page} of ${maxPages}`;
+    }
+
+    if (prevBtn) prevBtn.disabled = data.table_data.page <= 1;
+    if (nextBtn) nextBtn.disabled = data.table_data.page >= maxPages;
+  }
+}
+
+function renderDashboardCharts(chartRecs) {
+  const container = document.getElementById('dbChartsGrid');
+  if (!container) return;
+
+  if (!state.dashboardCharts) {
+    state.dashboardCharts = {};
+  }
+  Object.values(state.dashboardCharts).forEach(chart => chart.destroy());
+  state.dashboardCharts = {};
+
+  container.innerHTML = "";
+
+  if (!chartRecs || chartRecs.length === 0) {
+    container.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 3rem; text-align: center; color: var(--text-muted); border: 1px dashed var(--border); border-radius: var(--radius);">
+        <i class="ti ti-chart-bar-off" style="font-size: 36px; display: block; margin-bottom: 0.5rem; color: var(--text-faint);"></i>
+        No visualizations could be recommended for this worksheet layout.
+      </div>
+    `;
+    return;
+  }
+
+  chartRecs.forEach(chart => {
+    const card = document.createElement('div');
+    card.className = 'db-chart-card';
+    card.innerHTML = `
+      <div class="db-chart-title-wrap">
+        <h3 class="db-chart-title">${escHtml(chart.title)}</h3>
+        <p class="db-chart-reason">${escHtml(chart.reason)}</p>
+      </div>
+      <div class="db-chart-canvas-wrap">
+        <canvas id="canvas_${chart.id}"></canvas>
+      </div>
+    `;
+    container.appendChild(card);
+
+    const ctx = document.getElementById(`canvas_${chart.id}`).getContext('2d');
+    const isDark = document.body.getAttribute('data-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+    const textColor = isDark ? '#D1D1D1' : '#353740';
+
+    const palette = [
+      'rgba(37, 99, 235, 0.8)',
+      'rgba(168, 85, 247, 0.8)',
+      'rgba(245, 158, 11, 0.8)',
+      'rgba(22, 163, 74, 0.8)',
+      'rgba(249, 115, 22, 0.8)',
+      'rgba(14, 116, 144, 0.8)',
+    ];
+
+    const borderPalette = [
+      '#2563EB', '#A855F7', '#D97706', '#16A34A', '#F97316', '#0E7490'
+    ];
+
+    let chartConfig = {
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: chart.type === 'pie',
+            position: 'bottom',
+            labels: {
+              color: textColor,
+              font: { family: 'Inter', size: 10 }
+            }
+          },
+          tooltip: {
+            titleFont: { family: 'Inter', weight: 'bold' },
+            bodyFont: { family: 'Inter' }
+          }
+        },
+        scales: {},
+        onClick: (evt, activeElements) => {
+          if (activeElements.length > 0) {
+            const activePoint = activeElements[0];
+            const index = activePoint.index;
+
+            if (chart.type === 'scatter') return;
+
+            const clickedValue = chart.spec.labels[index];
+            if (clickedValue !== undefined && clickedValue !== "Others" && clickedValue !== "Null" && clickedValue !== "Missing") {
+              applyDashboardFilter(chart.x_column, clickedValue);
+            }
+          }
+        }
+      }
+    };
+
+    if (chart.type !== 'pie') {
+      chartConfig.options.scales = {
+        x: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { family: 'Inter', size: 9 } }
+        },
+        y: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { family: 'Inter', size: 9 } }
+        }
+      };
+    }
+
+    if (chart.type === 'scatter') {
+      chartConfig.type = 'scatter';
+      chartConfig.data = {
+        datasets: chart.spec.series.map((s, idx) => ({
+          label: s.label,
+          data: s.data,
+          backgroundColor: palette[idx % palette.length],
+          borderColor: borderPalette[idx % borderPalette.length],
+          pointRadius: 4,
+          pointHoverRadius: 6
+        }))
+      };
+      
+      chartConfig.options.scales.x.title = {
+        display: true,
+        text: chart.x_column.replace(/_/g, ' '),
+        color: textColor,
+        font: { family: 'Inter', size: 10, weight: 'bold' }
+      };
+      chartConfig.options.scales.y.title = {
+        display: true,
+        text: chart.y_column.replace(/_/g, ' '),
+        color: textColor,
+        font: { family: 'Inter', size: 10, weight: 'bold' }
+      };
+    } else if (chart.type === 'pie') {
+      chartConfig.type = 'doughnut';
+      chartConfig.data = {
+        labels: chart.spec.labels,
+        datasets: [{
+          data: chart.spec.series[0].data,
+          backgroundColor: palette.slice(0, chart.spec.labels.length),
+          borderColor: isDark ? '#171717' : '#FFFFFF',
+          borderWidth: 1.5
+        }]
+      };
+    } else if (chart.type === 'area') {
+      chartConfig.type = 'line';
+      chartConfig.data = {
+        labels: chart.spec.labels,
+        datasets: chart.spec.series.map((s, idx) => ({
+          label: s.label,
+          data: s.data,
+          backgroundColor: palette[idx % palette.length].replace('0.8', '0.2'),
+          borderColor: borderPalette[idx % borderPalette.length],
+          borderWidth: 2,
+          fill: true,
+          tension: 0.15
+        }))
+      };
+    } else {
+      chartConfig.type = chart.type;
+      chartConfig.data = {
+        labels: chart.spec.labels,
+        datasets: chart.spec.series.map((s, idx) => ({
+          label: s.label,
+          data: s.data,
+          backgroundColor: chart.type === 'bar' ? palette[idx % palette.length] : palette[idx % palette.length].replace('0.8', '0.05'),
+          borderColor: borderPalette[idx % borderPalette.length],
+          borderWidth: 2,
+          fill: false,
+          tension: 0.15
+        }))
+      };
+    }
+
+    state.dashboardCharts[chart.id] = new Chart(ctx, chartConfig);
+  });
+}
+
+function applyDashboardFilter(column, value) {
+  if (!state.dashboardFilters) {
+    state.dashboardFilters = {};
+  }
+  state.dashboardFilters[column] = [value];
+  state.dashboardPage = 1;
+  fetchDashboardData();
+}
+
+function removeDashboardFilter(column) {
+  if (state.dashboardFilters && state.dashboardFilters[column]) {
+    delete state.dashboardFilters[column];
+    state.dashboardPage = 1;
+    fetchDashboardData();
+  }
+}
+
+function clearAllDashboardFilters() {
+  state.dashboardFilters = {};
+  state.dashboardPage = 1;
+  state.dashboardSearch = "";
+  
+  const searchInput = document.getElementById('dbTableSearchInput');
+  if (searchInput) searchInput.value = "";
+  
+  fetchDashboardData();
+}
+
+function onDashboardTableSearch() {
+  const searchInput = document.getElementById('dbTableSearchInput');
+  if (!searchInput) return;
+
+  state.dashboardSearch = searchInput.value;
+  state.dashboardPage = 1;
+
+  if (state._dbSearchTimeout) {
+    clearTimeout(state._dbSearchTimeout);
+  }
+  state._dbSearchTimeout = setTimeout(() => {
+    fetchDashboardData();
+  }, 250);
+}
+
+function onDashboardTableSort(column) {
+  if (state.dashboardSortColumn === column) {
+    state.dashboardSortDir = state.dashboardSortDir === 'ASC' ? 'DESC' : 'ASC';
+  } else {
+    state.dashboardSortColumn = column;
+    state.dashboardSortDir = 'ASC';
+  }
+  fetchDashboardData();
+}
+
+function changeDashboardPage(delta) {
+  const page = state.dashboardPage || 1;
+  const newPage = page + delta;
+  if (newPage < 1) return;
+
+  const maxPages = Math.ceil(state.dashboardTableTotalCount / 20);
+  if (newPage > maxPages && delta > 0) return;
+
+  state.dashboardPage = newPage;
+  fetchDashboardData();
+}
+
+async function exportDashboardTable() {
+  const btn = document.querySelector('.overview-export-btn');
+  if (!btn) return;
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = iconSpinner() + ' Exporting...';
+
+  try {
+    const res = await fetch('/api/dashboard/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filters: state.dashboardFilters || {},
+        search: state.dashboardSearch || "",
+        sort_column: state.dashboardSortColumn,
+        sort_dir: state.dashboardSortDir || "ASC",
+        format: "csv"
+      })
+    });
+
+    if (!res.ok) throw new Error('Export failed');
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${state.dataset.name.split('.')[0]}_dashboard_export.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    showToast('Dashboard data exported successfully.', 'success');
+  } catch (err) {
+    showToast('Failed to export dashboard data.', 'error');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
 }
 
 function closeInsightsPage() {
@@ -563,10 +1212,6 @@ function renderInsights(insights) {
         <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0;">There are no findings matching this specific question.</p>
       </div>
     `;
-    if (state.insightsCharts) {
-      state.insightsCharts.forEach(c => c && c.destroy && c.destroy());
-    }
-    state.insightsCharts = [];
     return;
   }
 
@@ -640,104 +1285,9 @@ function renderInsights(insights) {
           <strong>Evidence:</strong> ${escHtml(ins.evidence)}
         </div>
 
-        <!-- Sparkline Chart -->
-        ${ins.sparkline_data && ins.sparkline_data.length ? `
-        <div class="insights-sparkline-wrap" style="height: 60px; margin-top: auto; border-top: 1px dashed var(--border); padding-top: 0.5rem; position: relative;">
-          <canvas id="sparkline-canvas-${index}" style="width: 100%; height: 100%;"></canvas>
-        </div>
-        ` : ''}
-
       </div>
     `;
   }).join('');
-
-  // Destroy old charts
-  if (state.insightsCharts) {
-    state.insightsCharts.forEach(c => c && c.destroy && c.destroy());
-  }
-  state.insightsCharts = [];
-
-  // Render Sparklines
-  setTimeout(() => {
-    const isDark = document.body.getAttribute('data-theme') === 'dark';
-    
-    filteredInsights.forEach((ins, index) => {
-      if (!ins.sparkline_data || !ins.sparkline_data.length) return;
-      
-      const canvasEl = document.getElementById(`sparkline-canvas-${index}`);
-      if (!canvasEl) return;
-      
-      const ctx = canvasEl.getContext('2d');
-      if (!ctx) return;
-      
-      // Select color based on severity
-      let color = '#3B82F6';
-      if ((ins.severity || '').toLowerCase() === 'high') {
-        color = '#EA4335';
-      } else if ((ins.severity || '').toLowerCase() === 'medium') {
-        color = '#F59E0B';
-      }
-
-      const gradient = ctx.createLinearGradient(0, 0, 0, 50);
-      gradient.addColorStop(0, color + '20');
-      gradient.addColorStop(1, 'rgba(0,0,0,0)');
-
-      const runCreateSparkline = () => {
-        try {
-          if (!document.getElementById(`sparkline-canvas-${index}`)) return; // double check element still exists
-          const chartInstance = new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: ins.sparkline_labels || ins.sparkline_data.map((_, i) => String(i)),
-              datasets: [{
-                data: ins.sparkline_data,
-                borderColor: color,
-                borderWidth: 1.75,
-                fill: true,
-                backgroundColor: gradient,
-                pointRadius: 0,
-                pointHitRadius: 8,
-                tension: 0.25
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: {
-                legend: { display: false },
-                tooltip: {
-                  enabled: true,
-                  backgroundColor: isDark ? '#171717' : '#FFFFFF',
-                  titleColor: isDark ? '#ECECEC' : '#0D0D0D',
-                  bodyColor: isDark ? '#D1D1D1' : '#353740',
-                  borderColor: isDark ? '#2D2D2D' : '#E5E5E5',
-                  borderWidth: 1,
-                  displayColors: false,
-                  callbacks: {
-                    title: (context) => context[0].label,
-                    label: (context) => `Value: ${context.raw}`
-                  }
-                }
-              },
-              scales: {
-                x: { display: false },
-                y: { display: false }
-              }
-            }
-          });
-          state.insightsCharts.push(chartInstance);
-        } catch (e) {
-          console.error("Sparkline chart creation failed:", e);
-        }
-      };
-
-      if (document.readyState === 'complete' || document.readyState === 'interactive') {
-        runCreateSparkline();
-      } else {
-        window.addEventListener('DOMContentLoaded', runCreateSparkline);
-      }
-    });
-  }, 100);
 }
 
 // Utility to parse basic bold/italic markdown into HTML safely
@@ -752,14 +1302,6 @@ function parseSimpleMarkdown(txt) {
    NEW DATASET / RESET
 ════════════════════════════════════════════════════════════════ */
 function resetToNoDataset() {
-  Object.values(state.chartMap).forEach(c => c && c.destroy && c.destroy());
-  if (state.vizModal.chart) { state.vizModal.chart.destroy(); state.vizModal.chart = null; }
-  if (state.insightsCharts) {
-    state.insightsCharts.forEach(c => c && c.destroy && c.destroy());
-    state.insightsCharts = [];
-  }
-
-  state.chartMap     = {};
   state.tableData    = {};
   state.uploaded     = false;
   state.dataset      = { name: '', rows: 0, columns: [] };
@@ -767,7 +1309,6 @@ function resetToNoDataset() {
   state.lastSQL      = '';
   state.overview     = null;
   state.insights     = null;
-  state.vizModal     = { msgId: null, chart: null };
   state.previewTruncated = false;
   state.previewRowCount  = 0;
   state.masterSchema = {};
@@ -793,7 +1334,6 @@ function resetToNoDataset() {
   chatInput.placeholder = 'Upload a dataset to get started...';
   sendBtn.disabled      = true;
   fileInput.value       = '';
-  closeVizModal();
 
   // Reset replace missing badge
   const badge = document.getElementById('replaceMissingBadge');
@@ -1097,7 +1637,6 @@ function buildTableBlock(msgId, columns, rows, total, question, showToolbar) {
   if (rows.length >= 1) {
     toolbarHtml = `
       <div class="action-toolbar">
-        ${showToolbar ? `<button class="toolbar-btn toolbar-btn-primary" onclick="openVizModal('${msgId}')">Visualize</button><div class="toolbar-sep"></div>` : ''}
         <div class="dl-wrap">
           <button class="toolbar-btn" onclick="toggleDlMenu('${msgId}', event)" aria-haspopup="true" aria-expanded="false"><i class="ti ti-download"></i> Export ▾</button>
           <div class="dl-menu" id="dlmenu-${msgId}">
@@ -1219,8 +1758,6 @@ document.addEventListener('keydown', (e) => {
         if (trigger) trigger.setAttribute('aria-expanded', 'false');
       }
     });
-    // Close viz modal
-    if (vizModal && vizModal.style.display !== 'none') closeVizModal();
   }
 });
 
@@ -1320,133 +1857,7 @@ async function doExport(msgId, fmt, columns, rows) {
 
 // renderInlineChart and switchInlineChart removed
 
-/* ═══════════════════════════════════════════════════════════════
-   VIZ MODAL (Power BI–style panel)
-════════════════════════════════════════════════════════════════ */
-function openVizModal(msgId) {
-  const td = state.tableData[msgId];
-  if (!td) return;
 
-  // Handle empty rows (e.g. initial master state)
-  if (td.allRows.length === 0 && msgId === 'master') {
-    sendMessage('Show top 10 rows');
-    showToast('Loading a data sample for visualization...', 'info');
-    return;
-  }
-
-  // Populate axis dropdowns
-  state.vizModal.msgId = msgId;
-
-  const columns = td.columns;
-  const { numCols, catCols, dateCols } = classifyColumns(columns, td.allRows);
-
-  // Prevent large pie charts
-  const isPie = document.querySelector('#vizChartTypeGrid .active')?.dataset.type === 'pie';
-  const xSelect = vizXAxis;
-  const ySelect = vizYAxis;
-
-  xSelect.innerHTML = '';
-  ySelect.innerHTML = '';
-
-  // X-Axis: categories first, then dates, then numeric
-  [...catCols, ...dateCols, ...numCols].forEach(col => {
-    xSelect.innerHTML += `<option value="${escHtml(col)}">${escHtml(col)}</option>`;
-  });
-  // Y-Axis: numeric only
-  numCols.forEach(col => {
-    ySelect.innerHTML += `<option value="${escHtml(col)}">${escHtml(col)}</option>`;
-  });
-
-  // Enable y-axis if we have numeric columns
-  ySelect.disabled = numCols.length === 0;
-
-  // Reset preview
-  vizPreviewEmpty.style.display = 'flex';
-  vizPreviewChart.style.display = 'none';
-  if (state.vizModal.chart) {
-    state.vizModal.chart.destroy();
-    state.vizModal.chart = null;
-  }
-
-  vizModal.style.display = 'flex';
-}
-
-function closeVizModal() {
-  vizModal.style.display = 'none';
-  if (state.vizModal.chart) {
-    state.vizModal.chart.destroy();
-    state.vizModal.chart = null;
-  }
-  state.vizModal.msgId = null;
-}
-
-if (vizModalClose) vizModalClose.addEventListener('click', closeVizModal);
-// Click overlay to close
-vizModal.addEventListener('click', (e) => {
-  if (e.target === vizModal) closeVizModal();
-});
-
-// ── Viz modal: chart type selection ──
-document.querySelectorAll('#vizChartTypeGrid .viz-chart-type-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#vizChartTypeGrid .viz-chart-type-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  });
-});
-
-// ── Viz modal: generate ──
-vizGenerateBtn.addEventListener('click', async () => {
-  const msgId = state.vizModal.msgId;
-  if (!msgId) return;
-
-  const chartType = document.querySelector('#vizChartTypeGrid .active')?.dataset.type || 'bar';
-  const xColumn = vizXAxis.value;
-  const yColumn = vizYAxis.value;
-
-  if (yColumn && yColumn === xColumn) {
-    showToast('X and Y axes must be different columns.', 'error');
-    return;
-  }
-
-  try {
-    vizGenerateBtn.disabled = true;
-    vizGenerateBtn.innerHTML = iconSpinner() + ' Generating...';
-
-    const res = await fetch('/visualize/render', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: chartType, xColumn, yColumn }),
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      showToast(data.error || 'Failed to generate chart.', 'error');
-      return;
-    }
-
-    vizPreviewEmpty.style.display = 'none';
-    vizPreviewChart.style.display = 'block';
-
-    // Destroy previous chart
-    if (state.vizModal.chart) {
-      state.vizModal.chart.destroy();
-      state.vizModal.chart = null;
-    }
-
-    state.vizModal.chart = renderChart('vizModalCanvas', data.spec);
-    showToast('Chart generated successfully.', 'success');
-  } catch (err) {
-    showToast('Failed to generate chart.', 'error');
-    console.error(err);
-  } finally {
-    vizGenerateBtn.disabled = false;
-    vizGenerateBtn.innerHTML = '<span>Generate Chart</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>';
-  }
-});
-
-// ── Viz modal: axis change triggers auto-update ──
-vizXAxis.addEventListener('change', () => vizGenerateBtn.click());
-vizYAxis.addEventListener('change', () => vizGenerateBtn.click());
 
 /* ═══════════════════════════════════════════════════════════════
    TOAST
@@ -1512,461 +1923,7 @@ function closeAllPages() {
 
 // closeAutoVisualization removed
 
-function closeCustomChartBuilder() {
-  const page = document.getElementById('customChartPage');
-  if (page) page.style.display = 'none';
-  messagesContainer.style.display = 'flex';
-  emptyState.style.display = messagesContainer.children.length ? 'none' : 'flex';
-  inputBarWrap.classList.add('visible');
-  document.querySelectorAll('.sidebar-nav-item').forEach(item => item.classList.remove('active'));
-  chatInput.focus();
-}
 
-// showAutoVisualization, renderAutoVisualizations, switchProfileTab, changeAutoVizLayout, filterAndSortAutoViz, expandAutoViz, and _customRenderChart removed
-
-function showCustomChartBuilder() {
-  if (!state.uploaded) { showToast('Please upload a dataset first.', 'error'); return; }
-  closeAllPages();
-  const page = document.getElementById('customChartPage');
-  page.style.display = 'block';
-  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
-    item.classList.toggle('active', item.dataset.view === 'custom-chart');
-  });
-  chatMain.scrollTo({ top: 0, behavior: 'smooth' });
-  populateCustomChartBuilder();
-}
-
-function resetCustomChartBuilder() {
-  const canvas = document.getElementById('customChartCanvas');
-  if (canvas && state.chartMap['custom']) {
-    state.chartMap['custom'].destroy();
-    delete state.chartMap['custom'];
-  }
-  document.getElementById('customChartEmpty').style.display = 'flex';
-  document.getElementById('customChartInsights').style.display = 'none';
-  document.getElementById('customChartWarning').style.display = 'none';
-}
-
-function populateCustomChartBuilder() {
-  const xSelect = document.getElementById('customXAxis');
-  const ySelect = document.getElementById('customYAxis');
-  xSelect.innerHTML = '';
-  ySelect.innerHTML = '';
-
-  const columns = state.dataset.columns || [];
-  const { numCols, catCols, dateCols } = classifyColumnsFromSchema(columns);
-
-  [...catCols, ...dateCols, ...numCols].forEach(col => {
-    xSelect.innerHTML += `<option value="${escHtml(col)}">${escHtml(col)}</option>`;
-  });
-  numCols.forEach(col => {
-    ySelect.innerHTML += `<option value="${escHtml(col)}">${escHtml(col)}</option>`;
-  });
-  ySelect.disabled = numCols.length === 0;
-
-  // Set initial labels based on default chart type
-  updateCustomChartAxisLabels();
-}
-
-// Update axis labels dynamically based on chart type selection
-function updateCustomChartAxisLabels() {
-  const chartType = document.querySelector('#customChartTypeGrid .active')?.dataset.type || 'bar';
-  const xLabel = document.getElementById('customXAxisLabel');
-  const yLabel = document.getElementById('customYAxisLabel');
-  const xSection = document.getElementById('customXAxisSection');
-  const ySection = document.getElementById('customYAxisSection');
-
-  if (chartType === 'pie') {
-    if (xLabel) xLabel.innerHTML = 'Category Column <span class="viz-ctrl-sub">(Slices)</span>';
-    if (yLabel) yLabel.innerHTML = 'Value Column <span class="viz-ctrl-sub">(Size of each slice)</span>';
-  } else if (chartType === 'scatter') {
-    if (xLabel) xLabel.innerHTML = 'X-Axis Column <span class="viz-ctrl-sub">(Numeric)</span>';
-    if (yLabel) yLabel.innerHTML = 'Y-Axis Column <span class="viz-ctrl-sub">(Numeric)</span>';
-  } else {
-    if (xLabel) xLabel.innerHTML = 'X-Axis Column <span class="viz-ctrl-sub">(Category / Label)</span>';
-    if (yLabel) yLabel.innerHTML = 'Y-Axis Column <span class="viz-ctrl-sub">(Value / Measure)</span>';
-  }
-}
-
-// Custom chart type selection
-document.querySelectorAll('#customChartTypeGrid .viz-chart-type-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#customChartTypeGrid .viz-chart-type-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    updateCustomChartAxisLabels();
-    
-    // Show contextual note for pie chart
-    const note = document.getElementById('customControlsNote');
-    if (btn.dataset.type === 'pie') {
-      note.style.display = 'block';
-      note.textContent = 'Pie Chart: Select a Category column for slices and a Value column for slice sizes.';
-    } else if (btn.dataset.type === 'scatter') {
-      note.style.display = 'block';
-      note.textContent = 'Scatter Chart: Select numeric columns for both X and Y axes.';
-    } else {
-      note.style.display = 'none';
-    }
-  });
-});
-
-// Custom chart — validate selections and show clear errors
-function validateCustomChartSelections(chartType, xColumn, yColumn) {
-  const errors = [];
-
-  if (!chartType) {
-    errors.push('Please select a chart type.');
-  }
-
-  if (!xColumn) {
-    errors.push('Please select a column for the X-Axis.');
-  }
-
-  // For non-pie charts, Y-axis is required
-  if (chartType !== 'pie' && !yColumn) {
-    errors.push('Please select a column for the Y-Axis.');
-  }
-
-  // X and Y must be different for non-pie charts
-  if (chartType !== 'pie' && xColumn && yColumn && xColumn === yColumn) {
-    errors.push('X-Axis and Y-Axis must be different columns.');
-  }
-
-  // Check that columns exist in the dataset
-  const columns = state.dataset.columns || [];
-  if (xColumn && !columns.includes(xColumn)) {
-    errors.push(`Column "${escHtml(xColumn)}" does not exist in the dataset.`);
-  }
-  if (yColumn && !columns.includes(yColumn)) {
-    errors.push(`Column "${escHtml(yColumn)}" does not exist in the dataset.`);
-  }
-
-  return errors;
-}
-
-// Custom chart generate
-document.getElementById('customGenerateBtn').addEventListener('click', async () => {
-  if (!state.uploaded) { showToast('Please upload a dataset first.', 'error'); return; }
-
-  const chartType = document.querySelector('#customChartTypeGrid .active')?.dataset.type || 'bar';
-  const xColumn = document.getElementById('customXAxis').value;
-  const yColumn = document.getElementById('customYAxis').value;
-  const aggregation = document.querySelector('#customAggRow .active')?.dataset.agg || 'sum';
-
-  const warning = document.getElementById('customChartWarning');
-
-  // Validate selections
-  const validationErrors = validateCustomChartSelections(chartType, xColumn, yColumn);
-  if (validationErrors.length > 0) {
-    warning.style.display = 'block';
-    warning.innerHTML = validationErrors.map(e => '<div>' + escHtml(e) + '</div>').join('');
-    warning.style.borderLeft = '3px solid var(--error)';
-    warning.style.background = 'var(--error-bg)';
-    warning.style.color = 'var(--error)';
-    warning.style.padding = '10px 14px';
-    warning.style.borderRadius = 'var(--radius)';
-    warning.style.fontSize = '13px';
-    setTimeout(() => {
-      warning.style.display = 'none';
-      warning.style.borderLeft = '';
-      warning.style.background = '';
-      warning.style.color = '';
-      warning.style.padding = '';
-      warning.style.borderRadius = '';
-      warning.style.fontSize = '';
-    }, 5000);
-    return;
-  }
-
-  const genBtn = document.getElementById('customGenerateBtn');
-  genBtn.disabled = true;
-  genBtn.innerHTML = iconSpinner() + ' Building...';
-
-  try {
-    const res = await fetch('/visualize/custom-render', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chart_type: chartType, xColumn, yColumn, aggregation }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to render chart.');
-
-    // Hide empty state, show chart
-    document.getElementById('customChartEmpty').style.display = 'none';
-    const canvas = document.getElementById('customChartCanvas');
-
-    // Destroy previous
-    if (state.chartMap['custom']) {
-      state.chartMap['custom'].destroy();
-    }
-    state.chartMap['custom'] = renderChart('customChartCanvas', data.spec);
-
-    // Show insights if available
-    const insightsPanel = document.getElementById('customChartInsights');
-    const insightsBody = document.getElementById('customChartInsightsBody');
-    if (data.insights && data.insights.length) {
-      insightsBody.innerHTML = data.insights.map(i => `<div class="chart-insight-item">${i}</div>`).join('');
-      insightsPanel.style.display = 'block';
-    } else {
-      insightsPanel.style.display = 'none';
-    }
-    
-    showToast('Chart generated successfully.', 'success');
-  } catch (err) {
-    warning.style.display = 'block';
-    warning.textContent = err.message || 'Failed to render chart.';
-    warning.style.borderLeft = '3px solid var(--error)';
-    warning.style.background = 'var(--error-bg)';
-    warning.style.color = 'var(--error)';
-    warning.style.padding = '10px 14px';
-    warning.style.borderRadius = 'var(--radius)';
-    warning.style.fontSize = '13px';
-    setTimeout(() => {
-      warning.style.display = 'none';
-      warning.style.borderLeft = '';
-      warning.style.background = '';
-      warning.style.color = '';
-      warning.style.padding = '';
-      warning.style.borderRadius = '';
-      warning.style.fontSize = '';
-    }, 6000);
-  } finally {
-    genBtn.disabled = false;
-    genBtn.innerHTML = '<i class="ti ti-chart-bar"></i> Build Chart';
-  }
-});
-
-// Custom chart export
-async function exportCustomChart(fmt, btnEl) {
-  const canvas = document.getElementById('customChartCanvas');
-  if (!canvas || !state.chartMap['custom']) {
-    showToast('Generate a chart first before exporting.', 'info');
-    return;
-  }
-
-  const imageData = canvas.toDataURL('image/png');
-  const chartType = document.querySelector('#customChartTypeGrid .active')?.dataset.type || 'bar';
-  const xColumn = document.getElementById('customXAxis').value;
-  const yColumn = document.getElementById('customYAxis').value;
-
-  // Get labels and data from chart
-  let chartLabels = [];
-  let chartData = [];
-  try {
-    const chart = state.chartMap['custom'];
-    if (chart && chart.data) {
-      if (chart.data.labels) chartLabels = chart.data.labels;
-      if (chart.data.datasets && chart.data.datasets[0]) chartData = chart.data.datasets[0].data;
-    }
-  } catch (e) {}
-
-  btnEl.disabled = true;
-  btnEl.innerHTML = iconSpinner();
-  try {
-    const res = await fetch(`/visualize/export-chart/${fmt}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: `Custom Chart - ${chartType}`,
-        x_label: xColumn,
-        y_label: yColumn,
-        series_label: yColumn,
-        labels: chartLabels,
-        data: chartData,
-        insights: [],
-        image: imageData,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Export failed.');
-    }
-
-    // Download returned blob
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `custom_chart.${fmt}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    showToast(`Chart exported as .${fmt}`, 'success');
-  } catch (err) {
-    showToast(err.message || 'Export failed.', 'error');
-  } finally {
-    btnEl.disabled = false;
-    btnEl.innerHTML = `<i class="ti ti-${fmt === 'png' ? 'photo' : fmt === 'pdf' ? 'file-text' : fmt === 'xlsx' ? 'table' : 'file-word'}"></i> ${fmt.toUpperCase()}`;
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   SWITCH VIZ TYPE (inline)
-════════════════════════════════════════════════════════════════ */
-// switchVizType removed
-
-/* ═══════════════════════════════════════════════════════════════
-   CHART RENDERING UTILITIES
-════════════════════════════════════════════════════════════════ */
-function _chartLabel(type) {
-  const labels = {
-    column: 'Column', bar: 'Bar', line: 'Line', pie: 'Pie/Doughnut', scatter: 'Scatter'
-  };
-  return labels[type] || type;
-}
-
-function _chartIconSvg(type) {
-  const icons = {
-    column: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="14" width="4" height="6"/><rect x="10" y="8" width="4" height="12"/><rect x="16" y="4" width="4" height="16"/></svg>',
-    bar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="6" height="4"/><rect x="4" y="10" width="12" height="4"/><rect x="4" y="16" width="16" height="4"/></svg>',
-    line: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 8 12 12 15 16 7 20 11"/></svg>',
-    pie: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 1 10 10"/><path d="M12 2v10"/><path d="M12 22A10 10 0 1 1 12 2"/></svg>',
-    scatter: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="12" cy="14" r="2"/><circle cx="18" cy="16" r="2"/><circle cx="6" cy="18" r="2"/></svg>',
-  };
-  return icons[type] || '';
-}
-
-const PALETTE = [
-  '#2563EB', // blue
-  '#A855F7', // purple
-  '#F59E0B', // amber
-  '#10B981', // emerald
-  '#EF4444', // red
-  '#06B6D4'  // cyan
-];
-
-function renderChart(canvasId, spec) {
-  if (spec && !spec.type && spec.plotType) {
-    spec.type = spec.plotType;
-  }
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) {
-    console.log(`[renderChart] Canvas element #${canvasId} not found in DOM.`);
-    return null;
-  }
-
-  const seriesData = spec && spec.series ? spec.series : [];
-  console.log(`[renderChart] Initializing chart on #${canvasId}. Data:`, seriesData);
-
-  if (!spec || !spec.type) {
-    console.log(`[renderChart] Chart spec or type is missing.`);
-    return null;
-  }
-
-  if (!seriesData.length || !seriesData[0].data || !seriesData[0].data.length) {
-    console.log(`[renderChart] Chart data is empty. Skipping initialization.`);
-    return null;
-  }
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-
-  // FIX: Only destroy if canvasId is different from stored chartMap key
-  // Chart.getChart() may conflict with state.chartMap — use ONLY state.chartMap
-  if (state.chartMap[canvasId]) {
-    try { state.chartMap[canvasId].destroy(); } catch(e) {}
-    delete state.chartMap[canvasId];
-  }
-
-  const isHorizontalBar = spec.type === 'bar';
-  const isVerticalBar = spec.type === 'column';
-  const chartType = (isHorizontalBar || isVerticalBar) ? 'bar' : spec.type;
-
-  const config = {
-    type: chartType,
-    data: {
-      labels: spec.labels || [],
-      datasets: seriesData.map((s, i) => {
-        const defaultColor = PALETTE[i % PALETTE.length];
-        return {
-          label: s.label || '',
-          data: s.data || [],
-          backgroundColor: (() => {
-            if (chartType === 'pie') {
-              return (s.data || []).map((_, idx) => PALETTE[idx % PALETTE.length]);
-            }
-            return s.backgroundColor || spec.backgroundColor || defaultColor;
-          })(),
-          borderColor: (() => {
-            if (chartType === 'pie') {
-              return '#ffffff';
-            }
-            return s.borderColor || spec.borderColor || defaultColor;
-          })(),
-          borderWidth: s.borderWidth || spec.borderWidth || 2,
-          tension: s.tension !== undefined ? s.tension : 0.25,
-          fill: s.fill !== undefined ? s.fill : false,
-          pointRadius: s.pointRadius || (chartType === 'scatter' ? 5 : 3),
-          pointHoverRadius: s.pointHoverRadius || 6,
-        };
-      }),
-    },
-    options: {
-      indexAxis: isHorizontalBar ? 'y' : 'x',
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 400 },
-      interaction: {
-        intersect: false,
-        mode: 'index',
-      },
-      plugins: {
-        legend: {
-          display: chartType === 'pie' || (spec.series && spec.series.length > 1),
-          position: 'bottom',
-          labels: { boxWidth: 12, font: { size: 11 }, padding: 8 },
-        },
-        tooltip: {
-          enabled: true,
-          backgroundColor: 'rgba(0,0,0,0.8)',
-          titleFont: { size: 12 },
-          bodyFont: { size: 12 },
-          padding: 8,
-          cornerRadius: 4,
-        },
-      },
-      scales: chartType !== 'pie' ? {
-        x: {
-          ticks: { font: { size: 10 }, maxRotation: 45 },
-          grid: { color: 'rgba(0,0,0,0.06)' },
-        },
-        y: {
-          beginAtZero: true,
-          ticks: { font: { size: 10 } },
-          grid: { color: 'rgba(0,0,0,0.06)' },
-        },
-      } : {},
-    },
-  };
-
-  try {
-    let chartInstance = null;
-    // FIX: Use requestAnimationFrame instead of readyState check for consistency
-    const createFn = () => {
-      try {
-        chartInstance = new Chart(ctx, config);
-        state.chartMap[canvasId] = chartInstance;
-      } catch (err) {
-        console.error(`new Chart() failed for #${canvasId}:`, err);
-      }
-    };
-
-    if (document.readyState === 'complete' || document.readyState === 'interactive') {
-      requestAnimationFrame(createFn);
-    } else {
-      window.addEventListener('DOMContentLoaded', createFn);
-    }
-    // FIX: Return the stored chart instance instead of the local variable
-    return state.chartMap[canvasId] || null;
-  } catch (e) {
-    console.error('Chart render error:', e);
-    return null;
-  }
-}
-
-// renderChartInMsg removed
 
 /* ═══════════════════════════════════════════════════════════════
    TABLE PAGINATION

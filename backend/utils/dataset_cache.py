@@ -21,7 +21,6 @@ import threading
 import pandas as pd
 
 from backend.utils.active_dataset_store import get_active_dataset_info, get_active_connection
-from backend.services.visualization_profile_service import VisualizationProfileService
 
 _lock = threading.Lock()
 _cache: dict[str, dict] = {}
@@ -44,7 +43,7 @@ def get_active_dataframe_and_profile() -> tuple[pd.DataFrame, dict]:
     finally:
         conn.close()
 
-    profile = VisualizationProfileService().profile(df)
+    profile: dict = {}
 
     with _lock:
         _cache[db_path] = {"mtime": mtime, "df": df, "profile": profile}

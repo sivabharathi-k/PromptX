@@ -8,7 +8,6 @@
  * - Unhandled promise rejection handler
  * - Safe DOM access utilities
  * - Safe JSON parse
- * - Chart rendering safety wrapper
  * - Toast error notification system (duplicate-safe)
  * - Null/undefined guard helpers
  */
@@ -273,110 +272,7 @@
     return arr[index];
   };
 
-  // ── Chart Safety ──────────────────────────────────────────────────────────
-  
-  /**
-   * Safely destroy a Chart.js chart instance.
-   * @param {Chart|null} chart
-   */
-  __safe.destroyChart = function (chart) {
-    if (!chart) return;
-    try {
-      chart.destroy();
-    } catch (e) {
-      logError('WARN', 'destroyChart', e);
-    }
-  };
 
-  /**
-   * Safely render a chart with automatic fallback.
-   * Returns the chart instance or null on failure.
-   * @param {string} canvasId
-   * @param {object} spec
-   * @returns {Chart|null}
-   */
-  __safe.renderChart = function (canvasId, spec) {
-    try {
-      var canvas = document.getElementById(canvasId);
-      if (!canvas) {
-        logError('WARN', 'renderChart: canvas "' + canvasId + '" not found');
-        return null;
-      }
-      var ctx = canvas.getContext('2d');
-      if (!ctx) {
-        logError('WARN', 'renderChart: could not get 2d context for "' + canvasId + '"');
-        return null;
-      }
-      if (!spec || !spec.type) {
-        // Try to build a minimal valid spec from what we have
-        spec = buildFallbackSpec(spec);
-      }
-      if (typeof Chart === 'undefined') {
-        logError('CRITICAL', 'renderChart: Chart.js not loaded');
-        return null;
-      }
-      return new Chart(ctx, spec);
-    } catch (e) {
-      logError('ERROR', 'renderChart("' + canvasId + '")', e);
-      return null;
-    }
-  };
-
-  /**
-   * Build a fallback chart spec if the original is invalid.
-   * @param {object} originalSpec
-   * @returns {object}
-   */
-  function buildFallbackSpec(originalSpec) {
-    var safeSpec = {
-      type: 'bar',
-      data: {
-        labels: ['No Data'],
-        datasets: [{
-          label: 'No data available',
-          data: [0],
-          backgroundColor: 'rgba(200,200,200,0.5)',
-          borderColor: 'rgba(150,150,150,0.8)',
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: true },
-          tooltip: { enabled: true }
-        }
-      }
-    };
-
-    if (originalSpec && typeof originalSpec === 'object') {
-      // Try to preserve as much as possible
-      if (originalSpec.type) safeSpec.type = originalSpec.type;
-      if (originalSpec.data) {
-        safeSpec.data = originalSpec.data;
-      } else if (originalSpec.series && Array.isArray(originalSpec.series)) {
-        var labels = originalSpec.labels || [];
-        if (originalSpec.series[0] && originalSpec.series[0].labels) {
-          labels = originalSpec.series[0].labels;
-        }
-        safeSpec.data = {
-          labels: labels,
-          datasets: originalSpec.series.map(function (s) {
-            return {
-              label: s.label || 'Series',
-              data: s.data || [],
-              backgroundColor: s.backgroundColor || 'rgba(59,130,246,0.5)',
-              borderColor: s.borderColor || 'rgba(59,130,246,0.8)',
-              borderWidth: 1
-            };
-          })
-        };
-      }
-      if (originalSpec.options) safeSpec.options = originalSpec.options;
-    }
-    return safeSpec;
-  }
 
   // ── Toast System (fallback-safe) ──────────────────────────────────────────
   var toastQueue = [];
@@ -465,16 +361,3 @@
 
   console.log('[ErrorBoundary] Enterprise zero-failure protection active.');
 })();
-</final_file_content>
-
-<task_progress>
-- [x] Analyze existing codebase for vulnerabilities
-- [x] Create enterprise error handler module
-- [x] Create frontend error boundary module
-- [ ] Create chart rendering fallback system
-- [ ] Harden backend main.py with global error handlers
-- [ ] Harden frontend index.html
-- [ ] Update frontend main.js to use safe access patterns
-- [ ] Verify all files work together
-</task_progress>
-</write_to_file>

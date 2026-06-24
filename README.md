@@ -2,9 +2,9 @@
 
 > **Transform raw datasets into actionable insights using natural language — no SQL, no coding, no complexity.**
 
-PromptX is a production-grade, enterprise-ready web application that redefines how non-technical users interact with tabular data. Upload a CSV or Excel file, converse with your dataset in plain English, and instantly receive query results, AI-generated visualizations, data quality reports, and exportable documents — all powered by a sophisticated LLM-driven backend.
+PromptX is a production-grade, enterprise-ready web application that redefines how non-technical users interact with tabular data. Upload a CSV or Excel file, converse with your dataset in plain English, and instantly receive query results, data quality reports, and exportable documents — all powered by a sophisticated LLM-driven backend.
 
-The platform is strictly **read-only**: you can query, analyze, visualize, and export your data, but you cannot modify the underlying dataset.
+The platform is strictly **read-only**: you can query, analyze, and export your data, but you cannot modify the underlying dataset.
 
 ---
 
@@ -29,18 +29,7 @@ The platform is strictly **read-only**: you can query, analyze, visualize, and e
 - 3 intent types: `query`, `visualization`, `schema`
 - Context-aware follow-up handling
 
-### 📊 Comprehensive Visualization Suite
-- **Auto-Visualization**: AI analyzes the dataset and recommends the Top 10 best charts with confidence scores
-- **Custom Chart Builder**: Full Power BI-style interface with:
-  - 7 chart types: Bar, Line, Area, Pie, Donut, Scatter, Histogram
-  - Axis selection with intelligent defaults
-  - 6 aggregation options: Sum, Avg, Count, Max, Min, Median
-  - Sort Order: Ascending / Descending
-  - Top-N filtering (5, 10, 20, 50, 100)
-  - Smart chart validation with auto-suggestions
-  - Professional insights panel with statistical analysis
-- **In-chart type switching**: Switch between chart types without losing context
-- **Chat inline charts**: Visualize results directly in conversation
+
 
 ### 📈 AI Insights Engine
 - Dataset Overview & Summary
@@ -67,7 +56,6 @@ The platform is strictly **read-only**: you can query, analyze, visualize, and e
 
 ### 📤 Multi-Format Export
 - **Query Results**: Excel (.xlsx), PDF (.pdf), Word (.docx), Image (.png, .jpg)
-- **Chart Exports**: PNG (client-side), PDF, Word, Excel (server-side with embedded image + data + insights)
 - **Overview Reports**: Full dataset overview in all formats
 
 ### 🛡️ Relevance Validation Pipeline
@@ -86,8 +74,7 @@ The platform is strictly **read-only**: you can query, analyze, visualize, and e
 - Responsive sidebar navigation
 - Dataset health indicator
 - Toast notifications system
-- Keyboard shortcuts (Enter to send, Shift+Enter for new line, Esc to close)
-- Professional Chart.js rendering with theme-aware colors
+- Keyboard shortcuts (Enter to send, Shift+Enter for new line)
 - Animated transitions and micro-interactions
 
 ---
@@ -116,8 +103,6 @@ The platform is strictly **read-only**: you can query, analyze, visualize, and e
 | **HTML5** | Document structure |
 | **CSS3** | Styling with custom properties (theming) |
 | **JavaScript (Vanilla ES6+)** | Client-side logic (no frameworks) |
-| **Chart.js** | Interactive chart rendering |
-| **Chart.js DataLabels Plugin** | Value annotation on charts |
 | **Google Fonts (Inter)** | Typography |
 | **Tabler Icons** | Iconography |
 
@@ -145,25 +130,20 @@ promptx/
 │   │
 │   ├── services/                     # Business logic layer
 │   │   ├── __init__.py               # Package marker
-│   │   ├── chart_recommendation_service.py  # Chart recommendation engine
-│   │   ├── chart_recommender.py      # Core chart scoring & ranking
 │   │   ├── export_service.py         # Multi-format export (Excel/PDF/Word/Image)
 │   │   ├── query_service.py          # Text-to-SQL generation + execution
 │   │   ├── relevance_validator.py    # 8-step query understanding pipeline
-│   │   ├── visualization_preparation_service.py  # Chart spec rendering
-│   │   ├── visualization_profile_service.py       # Column profiling for viz
 │   │   └── insights/                 # AI Insights Engine
 │   │       ├── __init__.py
 │   │       ├── insights_engine.py    # 12-section statistical analysis
 │   │       └── README.md
 │   │
 │   ├── tests/                        # Unit tests
-│   │   └── test_aggregation.py
 │   │
 │   └── utils/                        # Utility functions
 │       ├── __init__.py
 │       ├── active_dataset_store.py   # Per-session SQLite management
-│       ├── dataset_cache.py          # DataFrame + profile caching
+│       ├── dataset_cache.py          # DataFrame caching
 │       ├── db_utils.py               # Schema extraction, DB helpers
 │       ├── file_utils.py             # File validation & reading
 │       └── schema_detector.py        # Column type detection (NUM/TEXT/DATE)
@@ -263,33 +243,9 @@ Type natural language questions in the chat input:
 "What is the total revenue by region sorted descending?"
 ```
 
-### 3. Visualize Data
-**Auto Visualization:**
-1. Click "Visualization → Auto Visualization" in the sidebar
-2. View the Top 10 AI-recommended charts with confidence scores
-3. Click "Expand" to open any recommendation in the Custom Chart Builder
-
-**Via Chat:**
-```
-"Show bar chart of sales by region"
-"Plot line chart of revenue over time"
-"Pie chart of customer segments"
-"Visualize salary distribution"
-```
-
-### 4. Custom Chart Builder
-1. Click "Visualization → Custom Chart Builder" in the sidebar
-2. Select chart type (Bar, Line, Pie, Scatter, Histogram, Area)
-3. Choose X-axis and Y-axis columns
-4. Configure aggregation (Sum, Avg, Count, Max, Min, Median)
-5. Set Sort Order and Top-N limit
-6. Click "Build Chart"
-7. Export as PNG, PDF, Excel, or Word
-
-### 5. Export Results
+### 3. Export Results
 - Click the "Export" button below any query result
 - Choose format: Excel (.xlsx), PDF (.pdf), Word (.docx), Image (.png/.jpg)
-- For charts: use the export buttons in the Custom Chart Builder
 - For Dataset Overview: use the export dropdown at the bottom
 
 ---
@@ -303,12 +259,6 @@ Type natural language questions in the chat input:
 | `GET` | `/schema` | Get dataset schema |
 | `GET` | `/dataset-overview` | Get comprehensive dataset analysis |
 | `GET` | `/dataset-overview/download/<fmt>` | Export overview report |
-| `POST` | `/visualize/auto-recommendations` | Get Top 10 chart recommendations |
-| `POST` | `/visualize/recommend` | Get AI chart recommendation |
-| `POST` | `/visualize/profile` | Get column profile |
-| `POST` | `/visualize/render` | Render chart with explicit axes |
-| `POST` | `/visualize/custom-render` | Custom chart builder |
-| `POST` | `/visualize/export-chart/<fmt>` | Export chart |
 | `GET` | `/download/<fmt>` | Download query results |
 
 ---
