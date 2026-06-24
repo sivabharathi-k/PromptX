@@ -29,6 +29,18 @@ const state = {
   tempWorkbookSheets: [],
   activeSheet: null,
   allSheets: [],
+  // Insights state
+  insights: null,
+  insightsFilters: {},
+  insightsPage: 1,
+  insightsSearch: '',
+  insightsSortColumn: null,
+  insightsSortDir: 'ASC',
+  insightsTableTotalCount: 0,
+  insightsCharts: {},
+  insightsChartCache: {},
+  activeInsightsTab: 'all',
+  selectedInsightId: null,
 };
 
 const PAGE_SIZE = 20;
@@ -1097,7 +1109,18 @@ async function showInsightsPage() {
   }, 750);
 
   try {
+    // Reset insights state on clean page open
+    state.insightsFilters = {};
+    state.insightsPage = 1;
+    state.insightsSearch = '';
+    state.insightsSortColumn = null;
+    state.insightsSortDir = 'ASC';
+    state.selectedInsightId = null;
     state.activeInsightsTab = 'all';
+
+    const searchInput = document.getElementById('insTableSearchInput');
+    if (searchInput) searchInput.value = '';
+
     const insights = state.insights || await fetchInsights();
     state.insights = insights;
 
@@ -1107,7 +1130,22 @@ async function showInsightsPage() {
     setTimeout(() => {
       loading.style.display = 'none';
       content.style.display = 'block';
+      
+      // Update header details
+      const insDatasetName = document.getElementById('insDatasetName');
+      if (insDatasetName) {
+        insDatasetName.textContent = state.activeSheet
+          ? `${state.dataset.name} (${state.activeSheet})`
+          : state.dataset.name;
+      }
+      const insLastUpdated = document.getElementById('insLastUpdated');
+      if (insLastUpdated) {
+        const now = new Date();
+        insLastUpdated.textContent = `Last Updated: ${now.toLocaleTimeString()}`;
+      }
+
       renderInsights(insights);
+      fetchInsightsTableData(); // Initial load of drill-down table
     }, 300);
 
   } catch (err) {
@@ -1127,8 +1165,82 @@ async function fetchInsights() {
   return data;
 }
 
+function getQuestionDetails(question) {
+  switch (question) {
+    case 'WHAT_HAPPENED':
+      return { qBorderClass: 'q-what-happened', qLabel: 'What Happened' };
+    case 'WHY_IT_HAPPENED':
+      return { qBorderClass: 'q-why-it-happened', qLabel: 'Why it Happened' };
+    case 'WHAT_TO_DO':
+      return { qBorderClass: 'q-what-to-do', qLabel: 'What to Do' };
+    case 'WHAT_NEXT':
+      return { qBorderClass: 'q-what-next', qLabel: 'What Next' };
+    case 'WHAT_IS_UNUSUAL':
+      return { qBorderClass: 'q-what-is-unusual', qLabel: 'Unusual' };
+    case 'CAN_I_TRUST':
+      return { qBorderClass: 'q-can-i-trust', qLabel: 'Trust' };
+    default:
+      return { qBorderClass: '', qLabel: question || '' };
+  }
+}
+
+function formatMetadataValue(val) {
+  if (val === null || val === undefined) {
+    return '<span style="color: var(--text-muted); font-weight: normal;">—</span>';
+  }
+  const s = String(val).trim();
+  if (s === '' || s.toLowerCase() === 'none') {
+    return '<span style="color: var(--text-muted); font-weight: normal;">—</span>';
+  }
+  return escHtml(s.replace(/_/g, ' '));
+}
+
 function renderInsights(insights) {
-  // Render Section 1: Dataset Summary
+  // 1. Render Trust Scoring Banner
+  const trustScore = insights.dataset_summary.trust_score !== undefined ? insights.dataset_summary.trust_score : 100;
+  const insTrustScoreIcon = document.getElementById('insTrustScoreIcon');
+  if (insTrustScoreIcon) {
+    insTrustScoreIcon.textContent = `${trustScore}%`;
+    if (trustScore >= 85) {
+      insTrustScoreIcon.style.borderColor = 'var(--success)';
+      insTrustScoreIcon.style.color = 'var(--success)';
+      insTrustScoreIcon.style.backgroundColor = 'var(--success-bg)';
+    } else if (trustScore >= 60) {
+      insTrustScoreIcon.style.borderColor = 'var(--warning)';
+      insTrustScoreIcon.style.color = 'var(--warning)';
+      insTrustScoreIcon.style.backgroundColor = 'var(--warning-bg)';
+    } else {
+      insTrustScoreIcon.style.borderColor = 'var(--error)';
+      insTrustScoreIcon.style.color = 'var(--error)';
+      insTrustScoreIcon.style.backgroundColor = 'var(--error-bg)';
+    }
+  }
+
+  const insTrustScoreText = document.getElementById('insTrustScoreText');
+  if (insTrustScoreText) {
+    const flags = insights.dataset_summary.data_quality_flags || [];
+    if (flags.length > 0) {
+      insTrustScoreText.textContent = `Quality flags raised: ${flags.join(', ')}`;
+    } else {
+      insTrustScoreText.textContent = 'Completeness, unique values, and formatting parameters verified.';
+    }
+  }
+
+  const insForecastSafetyBadge = document.getElementById('insForecastSafetyBadge');
+  if (insForecastSafetyBadge) {
+    const safetyStatus = insights.dataset_summary.forecast_safety_status || '';
+    if (safetyStatus.toLowerCase() === 'safe') {
+      insForecastSafetyBadge.textContent = 'Forecast Safe';
+      insForecastSafetyBadge.className = 'confidence-badge confidence-high';
+      insForecastSafetyBadge.removeAttribute('title');
+    } else {
+      insForecastSafetyBadge.textContent = 'Forecast Unavailable';
+      insForecastSafetyBadge.className = 'confidence-badge confidence-low';
+      insForecastSafetyBadge.title = safetyStatus;
+    }
+  }
+
+  // 2. Render Section 1: Dataset Summary Profile Cards
   const elDomain = document.getElementById('idsDomain');
   if (elDomain) elDomain.textContent = insights.dataset_summary.domain || 'N/A';
   document.getElementById('idsGrain').textContent = insights.dataset_summary.grain || 'N/A';
@@ -1140,15 +1252,15 @@ function renderInsights(insights) {
 
   // Render Metrics badges
   const metricsContainer = document.getElementById('idsMetrics');
-  const detectedMetrics = insights.dataset_summary.metrics || insights.dataset_summary.metrics_detected || [];
-  metricsContainer.innerHTML = (detectedMetrics).map(m => `
+  const detectedMetrics = insights.dataset_summary.metrics || [];
+  metricsContainer.innerHTML = detectedMetrics.map(m => `
     <span class="overview-type-badge overview-type-num" style="padding: 4px 10px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; background: var(--primary-dim); color: var(--primary);">${escHtml(m)}</span>
   `).join('');
 
   // Render Dimensions badges
   const dimensionsContainer = document.getElementById('idsDimensions');
-  const detectedDimensions = insights.dataset_summary.dimensions || insights.dataset_summary.dimensions_detected || [];
-  dimensionsContainer.innerHTML = (detectedDimensions).map(d => `
+  const detectedDimensions = insights.dataset_summary.dimensions || [];
+  dimensionsContainer.innerHTML = detectedDimensions.map(d => `
     <span class="overview-type-badge overview-type-text" style="padding: 4px 10px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-secondary);">${escHtml(d)}</span>
   `).join('');
 
@@ -1163,27 +1275,31 @@ function renderInsights(insights) {
     flagsWrap.style.display = 'none';
   }
 
-  // Update tab badge counts
+  // 3. Update all 7 tab badges
   const allCount = (insights.insights || []).length;
   const whatHappenedCount = (insights.insights || []).filter(ins => ins.question === 'WHAT_HAPPENED').length;
   const whyItHappenedCount = (insights.insights || []).filter(ins => ins.question === 'WHY_IT_HAPPENED').length;
   const whatToDoCount = (insights.insights || []).filter(ins => ins.question === 'WHAT_TO_DO').length;
   const whatNextCount = (insights.insights || []).filter(ins => ins.question === 'WHAT_NEXT').length;
+  const whatIsUnusualCount = (insights.insights || []).filter(ins => ins.question === 'WHAT_IS_UNUSUAL').length;
+  const canITrustCount = (insights.insights || []).filter(ins => ins.question === 'CAN_I_TRUST').length;
 
   document.getElementById('tab-badge-all').textContent = allCount;
   document.getElementById('tab-badge-what-happened').textContent = whatHappenedCount;
   document.getElementById('tab-badge-why-it-happened').textContent = whyItHappenedCount;
   document.getElementById('tab-badge-what-to-do').textContent = whatToDoCount;
   document.getElementById('tab-badge-what-next').textContent = whatNextCount;
+  document.getElementById('tab-badge-what-is-unusual').textContent = whatIsUnusualCount;
+  document.getElementById('tab-badge-can-i-trust').textContent = canITrustCount;
 
-  // Ensure active tab class matches state
+  // Set active class on active tab button
   const activeTab = state.activeInsightsTab || 'all';
   const tabButtons = document.querySelectorAll('#insightsTabsBar .insights-tab-btn');
   tabButtons.forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab.toLowerCase() === activeTab.toLowerCase());
   });
 
-  // Bind tab click listeners if not done already
+  // Bind tab click listener
   const tabContainer = document.getElementById('insightsTabsBar');
   if (tabContainer && !tabContainer.dataset.listenerBound) {
     tabContainer.dataset.listenerBound = 'true';
@@ -1195,15 +1311,39 @@ function renderInsights(insights) {
     });
   }
 
-  // Filter insights based on active tab
+  // Render Active Filter chips bar
+  const filtersBar = document.getElementById('insFiltersBar');
+  const chipsContainer = document.getElementById('insActiveFilterChips');
+  if (filtersBar && chipsContainer) {
+    const filterEntries = Object.entries(state.insightsFilters);
+    if (filterEntries.length > 0) {
+      filtersBar.style.display = 'flex';
+      chipsContainer.innerHTML = filterEntries.map(([col, val]) => `
+        <span class="db-filter-chip">
+          <span>${escHtml(col)}: ${escHtml(Array.isArray(val) ? val.join(', ') : val)}</span>
+          <button onclick="removeInsightsFilter('${escHtml(col)}')"><i class="ti ti-x"></i></button>
+        </span>
+      `).join('');
+    } else {
+      filtersBar.style.display = 'none';
+    }
+  }
+
+  // Filter list of insights
   const filteredInsights = (insights.insights || []).filter(ins => {
     if (activeTab === 'all') return true;
-    return ins.question === activeTab;
+    return ins.question.toLowerCase() === activeTab.toLowerCase();
   });
 
-  // Render Section 2: Insights Grid
+  // Clear existing sparkline Chart.js references
+  if (!state.insightsCharts) {
+    state.insightsCharts = {};
+  }
+  Object.values(state.insightsCharts).forEach(chart => chart.destroy());
+  state.insightsCharts = {};
+
+  // 4. Render Insights Cards Grid
   const grid = document.getElementById('insightsAgentGrid');
-  
   if (filteredInsights.length === 0) {
     grid.innerHTML = `
       <div style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4rem 2rem; text-align: center; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-secondary);">
@@ -1215,34 +1355,19 @@ function renderInsights(insights) {
     return;
   }
 
-  grid.innerHTML = filteredInsights.map((ins, index) => {
+  grid.innerHTML = filteredInsights.map(ins => {
     const sevClass = (ins.severity || 'medium').toLowerCase();
-    
-    // Map question type to border classes and labels
-    let qBorderClass = '';
-    let qLabel = '';
-    if (ins.question === 'WHAT_HAPPENED') {
-      qBorderClass = 'q-what-happened';
-      qLabel = 'What Happened';
-    } else if (ins.question === 'WHY_IT_HAPPENED') {
-      qBorderClass = 'q-why-it-happened';
-      qLabel = 'Why it Happened';
-    } else if (ins.question === 'WHAT_TO_DO') {
-      qBorderClass = 'q-what-to-do';
-      qLabel = 'What to Do';
-    } else if (ins.question === 'WHAT_NEXT') {
-      qBorderClass = 'q-what-next';
-      qLabel = 'What Next';
-    }
+    const { qBorderClass, qLabel } = getQuestionDetails(ins.question);
 
-    // Map confidence value to badge class
     const confVal = (ins.confidence || 'medium').toUpperCase();
     let confClass = 'confidence-medium';
     if (confVal === 'HIGH') confClass = 'confidence-high';
     else if (confVal === 'LOW') confClass = 'confidence-low';
 
+    const isSelected = ins.id === state.selectedInsightId;
+
     return `
-      <div class="insights-card ${qBorderClass}" style="position: relative; display: flex; flex-direction: column; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); transition: transform 0.2s ease, box-shadow 0.2s ease;">
+      <div class="insights-card ${qBorderClass} ${isSelected ? 'selected' : ''}" id="ins-card-${ins.id}" style="position: relative; display: flex; flex-direction: column; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); transition: transform 0.2s ease, box-shadow 0.2s ease;">
         
         <!-- Header row -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
@@ -1260,34 +1385,373 @@ function renderInsights(insights) {
         <!-- Description -->
         <p style="font-size: 13px; line-height: 1.5; color: var(--text-secondary); margin: 0; flex-grow: 1;">${escHtml(ins.description)}</p>
 
+        <!-- Mini Sparkline evidence chart if not none -->
+        ${ins.chart_type && ins.chart_type !== 'none' ? `
+        <div class="ins-mini-chart-wrap" style="height: 100px; min-height: 100px;">
+          <canvas id="chart_${ins.id}"></canvas>
+        </div>
+        ` : ''}
+
         <!-- Metadata Grid -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; padding: 0.8rem; background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 12px; line-height: 1.4;">
           <div>
             <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Metric</span>
-            <strong style="color: var(--text);">${escHtml(ins.metric)}</strong>
+            <strong style="color: var(--text);">${formatMetadataValue(ins.metric)}</strong>
           </div>
           <div>
             <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Dimension</span>
-            <strong style="color: var(--text);">${escHtml(ins.dimension)}</strong>
+            <strong style="color: var(--text);">${formatMetadataValue(ins.dimension)}</strong>
           </div>
           <div>
             <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Period</span>
-            <strong style="color: var(--text);">${escHtml(ins.period)}</strong>
+            <strong style="color: var(--text);">${formatMetadataValue(ins.period)}</strong>
           </div>
           <div>
             <span style="color: var(--text-muted); display: block; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em;">Magnitude</span>
-            <strong style="color: var(--text);">${escHtml(ins.magnitude)}</strong>
+            <strong style="color: var(--text);">${formatMetadataValue(ins.magnitude)}</strong>
           </div>
         </div>
 
         <!-- Evidence -->
         <div style="border-top: 1px solid var(--border); padding-top: 0.8rem; font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-bottom: 0.5rem;">
-          <strong>Evidence:</strong> ${escHtml(ins.evidence)}
+          <strong>Evidence:</strong> ${parseSimpleMarkdown(ins.evidence)}
         </div>
 
       </div>
     `;
   }).join('');
+
+  // 5. Initialize mini sparkline charts with caching support
+  if (!state.insightsChartCache) {
+    state.insightsChartCache = {};
+  }
+
+  filteredInsights.forEach(ins => {
+    if (!ins.chart_type || ins.chart_type === 'none') return;
+    const canvas = document.getElementById(`chart_${ins.id}`);
+    if (!canvas) return;
+
+    const cacheKey = JSON.stringify({
+      metric: ins.metric,
+      dimension: ins.dimension,
+      filters: ins.filters || {},
+      chart_type: ins.chart_type
+    });
+
+    if (state.insightsChartCache[cacheKey]) {
+      const resData = state.insightsChartCache[cacheKey];
+      drawSparkline(canvas, ins.id, ins.chart_type, resData.labels, resData.data, resData.metric_label);
+    } else {
+      fetch('/api/insights/chart-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metric: ins.metric,
+          dimension: ins.dimension,
+          filters: ins.filters || {},
+          chart_type: ins.chart_type
+        })
+      })
+      .then(res => res.json())
+      .then(resData => {
+        if (!resData.success) return;
+        state.insightsChartCache[cacheKey] = resData;
+        drawSparkline(canvas, ins.id, ins.chart_type, resData.labels, resData.data, resData.metric_label);
+      })
+      .catch(err => console.error('Error drawing sparkline:', err));
+    }
+  });
+
+  // 6. Bind card selection click listeners
+  filteredInsights.forEach(ins => {
+    const cardEl = document.getElementById(`ins-card-${ins.id}`);
+    if (cardEl) {
+      cardEl.addEventListener('click', (e) => {
+        // Ignore clicks if clicking links, buttons, or charts
+        if (e.target.closest('a, button, canvas')) return;
+        toggleInsightCardSelection(ins);
+      });
+    }
+  });
+}
+
+function drawSparkline(canvas, insId, chartType, labels, data, metricLabel) {
+  const ctx = canvas.getContext('2d');
+  const isDark = document.body.getAttribute('data-theme') === 'dark';
+  const textColor = isDark ? '#9B9B9B' : '#6E6E80';
+  const gridColor = isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+
+  const accentColor = '#2563EB';
+
+  let config = {
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          titleFont: { family: 'Inter', size: 9 },
+          bodyFont: { family: 'Inter', size: 9 }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: textColor, font: { family: 'Inter', size: 8 } }
+        },
+        y: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, font: { family: 'Inter', size: 8 } }
+        }
+      }
+    }
+  };
+
+  if (chartType === 'pie') {
+    config.type = 'doughnut';
+    config.data = {
+      labels: labels,
+      datasets: [{
+        data: data,
+        backgroundColor: [
+          'rgba(37, 99, 235, 0.8)',
+          'rgba(168, 85, 247, 0.8)',
+          'rgba(245, 158, 11, 0.8)',
+          'rgba(22, 163, 74, 0.8)',
+          'rgba(249, 115, 22, 0.8)',
+        ].slice(0, labels.length),
+        borderColor: isDark ? '#171717' : '#FFFFFF',
+        borderWidth: 1
+      }]
+    };
+    config.options.scales = {};
+  } else if (chartType === 'line' || chartType === 'area') {
+    config.type = 'line';
+    config.data = {
+      labels: labels,
+      datasets: [{
+        label: metricLabel,
+        data: data,
+        borderColor: accentColor,
+        backgroundColor: 'rgba(37, 99, 235, 0.06)',
+        borderWidth: 1.5,
+        fill: chartType === 'area',
+        tension: 0.15,
+        pointRadius: labels.length > 20 ? 0 : 2,
+        pointHoverRadius: 4
+      }]
+    };
+  } else {
+    // bar chart sparkline
+    config.type = 'bar';
+    config.data = {
+      labels: labels,
+      datasets: [{
+        label: metricLabel,
+        data: data,
+        backgroundColor: accentColor,
+        borderRadius: 2
+      }]
+    };
+  }
+
+  state.insightsCharts[insId] = new Chart(ctx, config);
+}
+
+function toggleInsightCardSelection(ins) {
+  if (state.selectedInsightId === ins.id) {
+    state.selectedInsightId = null;
+    state.insightsFilters = {};
+  } else {
+    state.selectedInsightId = ins.id;
+    state.insightsFilters = ins.filters || {};
+  }
+
+  state.insightsPage = 1;
+  renderInsights(state.insights);
+  fetchInsightsTableData();
+}
+
+function clearAllInsightsFilters() {
+  state.insightsFilters = {};
+  state.selectedInsightId = null;
+  state.insightsPage = 1;
+  state.insightsSearch = '';
+
+  const searchInput = document.getElementById('insTableSearchInput');
+  if (searchInput) searchInput.value = '';
+
+  renderInsights(state.insights);
+  fetchInsightsTableData();
+}
+
+function removeInsightsFilter(column) {
+  if (state.insightsFilters && state.insightsFilters[column]) {
+    delete state.insightsFilters[column];
+    state.selectedInsightId = null;
+    state.insightsPage = 1;
+    renderInsights(state.insights);
+    fetchInsightsTableData();
+  }
+}
+
+async function fetchInsightsTableData() {
+  const tableHead = document.getElementById('insTableHead');
+  const tableBody = document.getElementById('insTableBody');
+  if (!tableHead || !tableBody) return;
+
+  try {
+    const res = await fetch('/api/insights/table-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filters: state.insightsFilters || {},
+        page: state.insightsPage || 1,
+        page_size: 20,
+        search: state.insightsSearch || '',
+        sort_column: state.insightsSortColumn,
+        sort_dir: state.insightsSortDir || 'ASC'
+      })
+    });
+
+    const response = await res.json();
+    if (!res.ok || !response.success) {
+      throw new Error(response.error || 'Failed to load insights table data.');
+    }
+
+    renderInsightsTable(response.table_data);
+
+  } catch (err) {
+    console.error(err);
+    tableBody.innerHTML = `<tr><td colspan="100" style="text-align: center; color: var(--error); padding: 2rem;">Error: ${escHtml(err.message)}</td></tr>`;
+  }
+}
+
+function renderInsightsTable(tableData) {
+  const tableHead = document.getElementById('insTableHead');
+  const tableBody = document.getElementById('insTableBody');
+  if (!tableHead || !tableBody) return;
+
+  state.insightsTableTotalCount = tableData.total_count;
+
+  // Render headers
+  const headers = tableData.columns.map(col => {
+    const isSorted = state.insightsSortColumn === col;
+    const icon = isSorted ? (state.insightsSortDir === 'ASC' ? ' ▲' : ' ▼') : '';
+    return `<th onclick="onInsightsTableSort('${escHtml(col)}')" style="cursor: pointer; user-select: none;">
+      ${escHtml(col)}${icon}
+    </th>`;
+  }).join('');
+  tableHead.innerHTML = `<tr>${headers}</tr>`;
+
+  // Render rows
+  if (tableData.rows.length === 0) {
+    tableBody.innerHTML = `<tr><td colspan="${tableData.columns.length}" style="text-align: center; color: var(--text-muted); padding: 2rem;">No matching entries found</td></tr>`;
+  } else {
+    tableBody.innerHTML = tableData.rows.map(row => `
+      <tr>
+        ${tableData.columns.map(col => `<td>${escHtml(String(row[col] !== undefined && row[col] !== null ? row[col] : ''))}</td>`).join('')}
+      </tr>
+    `).join('');
+  }
+
+  // Pagination Indicators
+  const totalCountEl = document.getElementById('insTableTotalCount');
+  const pageIndicatorEl = document.getElementById('insTablePageIndicator');
+  const prevBtn = document.getElementById('insTablePrevBtn');
+  const nextBtn = document.getElementById('insTableNextBtn');
+
+  if (totalCountEl) {
+    const start = tableData.total_count === 0 ? 0 : ((tableData.page - 1) * tableData.page_size) + 1;
+    const end = Math.min(tableData.page * tableData.page_size, tableData.total_count);
+    totalCountEl.textContent = `Showing ${start} to ${end} of ${tableData.total_count.toLocaleString()} entries`;
+  }
+
+  const maxPages = Math.max(1, Math.ceil(tableData.total_count / tableData.page_size));
+  if (pageIndicatorEl) {
+    pageIndicatorEl.textContent = `Page ${tableData.page} of ${maxPages}`;
+  }
+
+  if (prevBtn) prevBtn.disabled = tableData.page <= 1;
+  if (nextBtn) nextBtn.disabled = tableData.page >= maxPages;
+}
+
+function onInsightsTableSort(column) {
+  if (state.insightsSortColumn === column) {
+    state.insightsSortDir = state.insightsSortDir === 'ASC' ? 'DESC' : 'ASC';
+  } else {
+    state.insightsSortColumn = column;
+    state.insightsSortDir = 'ASC';
+  }
+  fetchInsightsTableData();
+}
+
+function changeInsightsPage(delta) {
+  const page = state.insightsPage || 1;
+  const newPage = page + delta;
+  if (newPage < 1) return;
+
+  const maxPages = Math.ceil(state.insightsTableTotalCount / 20);
+  if (newPage > maxPages && delta > 0) return;
+
+  state.insightsPage = newPage;
+  fetchInsightsTableData();
+}
+
+function onInsightsTableSearch() {
+  const searchInput = document.getElementById('insTableSearchInput');
+  if (!searchInput) return;
+
+  state.insightsSearch = searchInput.value;
+  state.insightsPage = 1;
+
+  if (state._insSearchTimeout) {
+    clearTimeout(state._insSearchTimeout);
+  }
+  state._insSearchTimeout = setTimeout(() => {
+    fetchInsightsTableData();
+  }, 250);
+}
+
+async function exportInsightsTable() {
+  const btn = document.querySelector('#insightsPage .overview-export-btn');
+  if (!btn) return;
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = iconSpinner() + ' Exporting...';
+
+  try {
+    const res = await fetch('/api/dashboard/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filters: state.insightsFilters || {},
+        search: state.insightsSearch || '',
+        sort_column: state.insightsSortColumn,
+        sort_dir: state.insightsSortDir || 'ASC',
+        format: 'csv'
+      })
+    });
+
+    if (!res.ok) throw new Error('Export failed');
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${state.dataset.name.split('.')[0]}_insights_export.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    showToast('Insights data exported successfully.', 'success');
+  } catch (err) {
+    showToast('Failed to export insights data.', 'error');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
 }
 
 // Utility to parse basic bold/italic markdown into HTML safely
@@ -2531,3 +2995,44 @@ buildTableRows = function(columns, rows) {
     return `<tr>${cells.join('')}</tr>`;
   }).join('');
 };
+
+// ── Theme Switcher Initialization & Event Handling ──
+document.addEventListener('DOMContentLoaded', () => {
+  const toggleBtn = document.getElementById('themeToggleBtn');
+  const toggleIcon = document.getElementById('themeToggleIcon');
+  
+  if (!toggleBtn || !toggleIcon) return;
+  
+  function updateToggleUI(theme) {
+    if (theme === 'dark') {
+      toggleIcon.className = 'ti ti-sun';
+      toggleBtn.title = 'Switch to Light Mode';
+      toggleBtn.setAttribute('aria-label', 'Switch to Light Mode');
+    } else {
+      toggleIcon.className = 'ti ti-moon';
+      toggleBtn.title = 'Switch to Dark Mode';
+      toggleBtn.setAttribute('aria-label', 'Switch to Dark Mode');
+    }
+  }
+
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  document.body.setAttribute('data-theme', currentTheme);
+  updateToggleUI(currentTheme);
+
+  toggleBtn.addEventListener('click', () => {
+    const activeTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', activeTheme);
+    document.body.setAttribute('data-theme', activeTheme);
+    localStorage.setItem('theme', activeTheme);
+    updateToggleUI(activeTheme);
+  });
+
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('theme')) {
+      const systemTheme = e.matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', systemTheme);
+      document.body.setAttribute('data-theme', systemTheme);
+      updateToggleUI(systemTheme);
+    }
+  });
+});

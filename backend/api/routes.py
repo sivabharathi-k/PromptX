@@ -803,6 +803,115 @@ def export_dashboard_data():
         return jsonify({"error": f"Failed to generate file: {exc}"}), 500
 
 
+@api.route("/api/insights/chart-data", methods=["POST"])
+def get_insights_chart_data():
+    """Get aggregated series data for mini visual evidence charts."""
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset loaded."}), 400
+
+    body = request.json or {}
+    metric = body.get("metric", "none")
+    dimension = body.get("dimension")
+    filters = body.get("filters", {})
+    chart_type = body.get("chart_type", "bar")
+
+    if not dimension:
+        return jsonify({"error": "Missing 'dimension' parameter."}), 400
+
+    from backend.utils.active_dataset_store import get_master_schema
+    from backend.services.insights_chart_service import get_insight_chart_series
+
+    schema = get_master_schema() or {}
+    series = get_insight_chart_series(metric, dimension, filters, schema, chart_type)
+
+    return jsonify({
+        "success": True,
+        "labels": series.get("labels", []),
+        "data": series.get("data", []),
+        "metric_label": series.get("metric_label", "Count"),
+        "dimension_label": series.get("dimension_label", dimension)
+    })
+
+
+@api.route("/api/insights/table-data", methods=["POST"])
+def get_insights_table_data():
+    """Get filtered, searched, and sorted preview rows for the Insights detailed table."""
+    if not active_dataset_exists():
+        return jsonify({"error": "No active dataset loaded."}), 400
+
+    body = request.json or {}
+    filters = body.get("filters", {})
+    page = int(body.get("page", 1))
+    page_size = int(body.get("page_size", 20))
+    search_query = body.get("search", "").strip()
+    sort_column = body.get("sort_column")
+    sort_dir = body.get("sort_dir", "ASC").upper()
+
+    from backend.utils.active_dataset_store import get_master_schema, get_active_connection, TABLE_NAME
+    from backend.services.recommender_service import build_where_clause
+
+    schema = get_master_schema() or {}
+
+    try:
+        conn = get_active_connection()
+        where_clause, params = build_where_clause(filters, schema)
+        
+        # Apply search filtering
+        if search_query:
+            search_parts = []
+            for col, dtype in schema.items():
+                if dtype in ("TEXT", "MIXED"):
+                    search_parts.append(f'"{col}" LIKE ?')
+                    params.append(f"%{search_query}%")
+            if search_parts:
+                if where_clause:
+                    where_clause += " AND (" + " OR ".join(search_parts) + ")"
+                else:
+                    where_clause = "WHERE (" + " OR ".join(search_parts) + ")"
+
+        cur = conn.cursor()
+        
+        # Count total matching rows
+        cur.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} {where_clause}", params)
+        rows_count = cur.fetchone()[0]
+
+        # Sorting & Pagination
+        order_by_clause = ""
+        if sort_column and sort_column in schema:
+            if sort_dir not in ("ASC", "DESC"):
+                sort_dir = "ASC"
+            order_by_clause = f'ORDER BY "{sort_column}" {sort_dir}'
+
+        offset = (page - 1) * page_size
+        
+        cur.execute(f"""
+            SELECT * FROM {TABLE_NAME}
+            {where_clause}
+            {order_by_clause}
+            LIMIT {page_size} OFFSET {offset}
+        """, params)
+
+        colnames = [desc[0] for desc in cur.description]
+        table_raw_rows = [dict(zip(colnames, r)) for r in cur.fetchall()]
+        cleaned_table_rows = _clean_rows(table_raw_rows)
+        
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "table_data": {
+                "columns": colnames,
+                "rows": cleaned_table_rows,
+                "total_count": rows_count,
+                "page": page,
+                "page_size": page_size
+            }
+        })
+    except Exception as exc:
+        logger.exception("Failed to query SQLite for insights table: %s", exc)
+        return jsonify({"error": f"Failed to load table rows: {exc}"}), 500
+
+
 @api.route("/query", methods=["POST"])
 def query():
     """Unified conversational entry point."""

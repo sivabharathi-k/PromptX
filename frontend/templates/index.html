@@ -10,6 +10,13 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.setAttribute('data-theme', savedTheme || (prefersDark ? 'dark' : 'light'));
+    })();
+  </script>
 </head>
 <body data-theme="light">
 
@@ -46,6 +53,9 @@
 
 
 
+        <button class="btn-icon theme-toggle-btn" id="themeToggleBtn" title="Toggle theme" aria-label="Toggle theme">
+          <i class="ti ti-moon" id="themeToggleIcon"></i>
+        </button>
         <button class="btn-icon btn-new-chat" id="newChatBtn" title="New dataset" aria-label="Start with a new dataset">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New Dataset
@@ -373,13 +383,17 @@
         <section id="insightsPage" class="dataset-overview-page" style="display:none;" aria-labelledby="insightsTitle">
           <div class="overview-page-header">
             <div>
-              <div class="overview-eyebrow">Analytical Engine</div>
-              <h1 id="insightsTitle">AI Insights</h1>
-              <p>Fact-based, precise observations on what happened, ranked by business impact.</p>
+              <div class="overview-eyebrow" id="insDatasetName">Analytical Engine</div>
+              <h1 id="insightsTitle">Executive Insights</h1>
+              <p id="insDatasetMeta">Fact-based, precise observations on what happened, diagnostic drivers, and forecasted risk trajectories.</p>
             </div>
-            <button class="overview-close-btn" type="button" onclick="closeInsightsPage()" aria-label="Return to chat">
-              <i class="ti ti-x"></i>
-            </button>
+            
+            <div class="db-header-actions" style="display: flex; align-items: center; gap: 1rem;">
+              <span id="insLastUpdated" style="font-size: 12px; color: var(--text-muted);">Last Updated: —</span>
+              <button class="overview-close-btn" type="button" onclick="closeInsightsPage()" aria-label="Return to chat">
+                <i class="ti ti-x"></i>
+              </button>
+            </div>
           </div>
 
           <div id="insightsLoading" class="overview-loading" style="display:flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; padding: 4rem 2rem;">
@@ -392,9 +406,22 @@
 
           <div id="insightsError" class="overview-error" style="display:none; padding: 2rem; border-radius: var(--radius); background: var(--error-bg); border: 1px solid var(--error); color: var(--error); margin: 2rem;"></div>
 
-          <div id="insightsContent" style="display:none; padding: 1.5rem; max-width: 1200px; margin: 0 auto;">
+          <div id="insightsContent" style="display:none; padding: 0 1.5rem 2.5rem 1.5rem;">
+            
+            <!-- Trust Profile Score Banner -->
+            <div id="insTrustBanner" style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; font-size: 14px; background: var(--surface);">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <div id="insTrustScoreIcon" style="width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--primary-dim); color: var(--primary); font-weight: 700; font-size: 15px; border: 2px solid var(--primary);">100%</div>
+                <div>
+                  <strong style="color: var(--text); font-size: 14px;">Data Trust & Reliability Score</strong>
+                  <span id="insTrustScoreText" style="display: block; font-size: 12px; color: var(--text-muted); margin-top: 3px;">Completeness, unique values, and formatting parameters verified.</span>
+                </div>
+              </div>
+              <div id="insForecastSafetyBadge" class="confidence-badge confidence-high" style="font-size: 11px; padding: 4px 10px; border-radius: var(--radius-sm); font-weight: 600;">Forecast Safe</div>
+            </div>
+
             <!-- SECTION 1: Dataset Summary -->
-            <div class="insights-section">
+            <div class="insights-section" style="margin-bottom: 2rem;">
               <div class="insights-hero-card">
                 <div class="insights-hero-header">
                   <div class="insights-badge"><i class="ti ti-activity"></i> Dataset Profile</div>
@@ -442,24 +469,41 @@
 
             <!-- SECTION 2: Insights List -->
             <div class="insights-section">
-              <h2 class="insights-section-title"><i class="ti ti-bulb"></i> Business Intelligence Insights</h2>
+              <h2 class="insights-section-title" style="margin-bottom: 1rem;"><i class="ti ti-bulb"></i> Business Intelligence Insights</h2>
               
               <!-- Tab Bar Filter -->
-              <div class="insights-tabs-bar" id="insightsTabsBar">
+              <div class="insights-tabs-bar" id="insightsTabsBar" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 1.5rem;">
                 <button class="insights-tab-btn active" data-tab="all">
                   All <span class="insights-tab-badge" id="tab-badge-all">0</span>
                 </button>
                 <button class="insights-tab-btn" data-tab="WHAT_HAPPENED">
-                  What Happened <span class="insights-tab-badge" id="tab-badge-what-happened">0</span>
+                  Descriptive <span class="insights-tab-badge" id="tab-badge-what-happened">0</span>
                 </button>
                 <button class="insights-tab-btn" data-tab="WHY_IT_HAPPENED">
-                  Why it Happened <span class="insights-tab-badge" id="tab-badge-why-it-happened">0</span>
+                  Diagnostic <span class="insights-tab-badge" id="tab-badge-why-it-happened">0</span>
                 </button>
                 <button class="insights-tab-btn" data-tab="WHAT_TO_DO">
-                  What to Do <span class="insights-tab-badge" id="tab-badge-what-to-do">0</span>
+                  Prescriptive <span class="insights-tab-badge" id="tab-badge-what-to-do">0</span>
                 </button>
                 <button class="insights-tab-btn" data-tab="WHAT_NEXT">
-                  What Next <span class="insights-tab-badge" id="tab-badge-what-next">0</span>
+                  Predictive <span class="insights-tab-badge" id="tab-badge-what-next">0</span>
+                </button>
+                <button class="insights-tab-btn" data-tab="WHAT_IS_UNUSUAL">
+                  Unusual <span class="insights-tab-badge" id="tab-badge-what-is-unusual">0</span>
+                </button>
+                <button class="insights-tab-btn" data-tab="CAN_I_TRUST">
+                  Trust <span class="insights-tab-badge" id="tab-badge-can-i-trust">0</span>
+                </button>
+              </div>
+
+              <!-- Filter chips display -->
+              <div class="db-filters-bar" id="insFiltersBar" style="display: none; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid var(--border); margin-bottom: 1.5rem; font-size: 13px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="font-weight: 600; color: var(--text-secondary);"><i class="ti ti-filter" style="margin-right: 4px;"></i>Active Insight Filter:</span>
+                  <div id="insActiveFilterChips" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+                </div>
+                <button class="rm-cancel-btn" style="padding: 4px 10px; font-size: 12px; margin: 0; background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer;" onclick="clearAllInsightsFilters()">
+                  <i class="ti ti-filter-off"></i> Clear Filters
                 </button>
               </div>
 
@@ -467,6 +511,52 @@
                 <!-- Insights dynamically populated here -->
               </div>
             </div>
+
+            <!-- Drill-down Details Table -->
+            <section class="overview-section" style="margin-top: 2.5rem; border-top: 1px solid var(--border); padding-top: 2rem;">
+              <div class="overview-section-heading" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <span><i class="ti ti-table"></i></span>
+                  <div>
+                    <h2>Insight Drill-down Rows</h2>
+                    <p>Details behind the active insights filter criteria</p>
+                  </div>
+                </div>
+                
+                <!-- Table actions -->
+                <div class="db-table-toolbar" style="display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;">
+                  <div class="rm-search-wrap" style="margin: 0; min-width: 200px;">
+                    <i class="ti ti-search rm-search-icon"></i>
+                    <input type="text" id="insTableSearchInput" class="rm-search-input" placeholder="Search rows..." oninput="onInsightsTableSearch()" />
+                  </div>
+                  
+                  <div class="overview-export-actions" style="margin: 0;">
+                    <button class="overview-export-btn" type="button" onclick="exportInsightsTable()" style="height: 38px; padding: 0 12px;">
+                      <i class="ti ti-download"></i> Export Data
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Table Wrap -->
+              <div class="overview-table-wrap" style="max-height: 400px; overflow-y: auto;">
+                <table class="overview-schema-table" id="insTable">
+                  <thead id="insTableHead"></thead>
+                  <tbody id="insTableBody"></tbody>
+                </table>
+              </div>
+              
+              <!-- Pagination -->
+              <div class="db-table-pagination" style="display: flex; justify-content: space-between; align-items: center; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-secondary);">
+                <div id="insTableTotalCount">Showing 0 of 0 entries</div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button class="rm-cancel-btn" style="padding: 4px 10px; font-size: 12px; margin: 0; cursor: pointer;" id="insTablePrevBtn" onclick="changeInsightsPage(-1)">Previous</button>
+                  <span id="insTablePageIndicator">Page 1 of 1</span>
+                  <button class="rm-cancel-btn" style="padding: 4px 10px; font-size: 12px; margin: 0; cursor: pointer;" id="insTableNextBtn" onclick="changeInsightsPage(1)">Next</button>
+                </div>
+              </div>
+            </section>
+
           </div>
         </section>
 

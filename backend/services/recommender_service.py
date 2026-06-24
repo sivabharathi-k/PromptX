@@ -14,6 +14,24 @@ from backend.utils.active_dataset_store import get_active_connection, TABLE_NAME
 
 logger = logging.getLogger("recommender_service")
 
+def resolve_column_name(col_name: str, schema: Dict[str, str]) -> str | None:
+    """
+    Fuzzy resolves a column name against the schema, ignoring casing, spaces, and underscores.
+    """
+    if not col_name or not schema:
+        return None
+    if col_name in schema:
+        return col_name
+    
+    def standardize(s: str) -> str:
+        return s.lower().replace("_", "").replace(" ", "")
+        
+    target = standardize(col_name)
+    for col in schema.keys():
+        if standardize(col) == target:
+            return col
+    return None
+
 def build_where_clause(filters: Dict[str, Any], schema: Dict[str, str]) -> Tuple[str, List[Any]]:
     """
     Build a safe parameterized SQL WHERE clause and parameter list from active filters.
@@ -27,11 +45,14 @@ def build_where_clause(filters: Dict[str, Any], schema: Dict[str, str]) -> Tuple
     params = []
     
     for col, val in filters.items():
-        # Ensure column exists in schema to prevent SQL injection
-        if col not in schema:
+        # Fuzzy resolve filter column name
+        resolved_col = resolve_column_name(col, schema)
+        if not resolved_col:
             continue
+        col = resolved_col
         
-        if val is None or val == "" or val == []:
+        # Skip null/empty/placeholder values like "none"
+        if val is None or val == "" or val == [] or val == "none" or val == "None" or val == ["none"] or val == ["None"]:
             continue
 
         col_type = schema[col]
@@ -47,13 +68,17 @@ def build_where_clause(filters: Dict[str, Any], schema: Dict[str, str]) -> Tuple
                 where_parts.append(f'"{col}" <= ?')
                 params.append(end)
         elif isinstance(val, list):
-            if len(val) == 1:
+            # Filter out placeholder strings from val lists
+            cleaned_vals = [v for v in val if v is not None and v != "" and str(v).lower() != "none"]
+            if not cleaned_vals:
+                continue
+            if len(cleaned_vals) == 1:
                 where_parts.append(f'"{col}" = ?')
-                params.append(val[0])
-            elif len(val) > 1:
-                placeholders = ", ".join(["?"] * len(val))
+                params.append(cleaned_vals[0])
+            else:
+                placeholders = ", ".join(["?"] * len(cleaned_vals))
                 where_parts.append(f'"{col}" IN ({placeholders})')
-                params.extend(val)
+                params.extend(cleaned_vals)
         else:
             where_parts.append(f'"{col}" = ?')
             params.append(val)

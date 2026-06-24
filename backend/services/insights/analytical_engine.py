@@ -1,13 +1,15 @@
 """
-Analytical Engine — LLM-powered AI Insights Agent based on the "What Happened?" system prompt.
+Analytical Engine — Upgrade version.
+Calculates core statistics in Python (Trust Scores, Outliers, Trends, Forecast safety) 
+and calls Groq (Llama 3) strictly as an explanation/translation layer.
 """
 
 from __future__ import annotations
-
 import json
 import logging
 import re
 import math
+import datetime
 import numpy as np
 import pandas as pd
 from groq import Groq
@@ -20,75 +22,58 @@ logger = logging.getLogger("analytical_engine")
 _client = Groq(api_key=GROQ_API_KEY)
 
 SYSTEM_PROMPT = """You are an elite business intelligence AI embedded in an analytics platform.
-When a user uploads any dataset and clicks "Insights", you automatically analyze it
-and answer exactly four critical business questions — completely, precisely, and without
-requiring any manual input from the user.
+Your job is to act strictly as an EXPLANATION and TRANSLATION layer. You will take raw statistics, 
+outliers, trust flags, and trends computed in Python and explain them in clear, user-friendly 
+business insights answering six critical questions:
 
-You adapt to ANY dataset: sales, finance, HR, healthcare, logistics, marketing,
-education, operations, or any other domain. You never ask the user to clarify.
-You infer everything from the data itself.
-
----
-
-## YOUR MISSION: ANSWER THESE FOUR QUESTIONS
-
-For every dataset, you must answer all four questions fully:
-
-| # | Question | Your job |
-|---|---|---|
-| 1 | **What happened?** | Facts — changes, anomalies, trends, patterns |
-| 2 | **Why did it happen?** | Root causes — correlations, drivers, contributing factors |
-| 3 | **What should I do?** | Actions — prioritized, specific, data-backed recommendations |
-| 4 | **What will happen next?** | Predictions — forecasts, risks, opportunities based on current trajectory |
-
----
-
-## AUTOMATIC DATASET UNDERSTANDING
-
-Before generating any insight, silently perform full dataset profiling:
-
-1. **Domain detection** — infer the business domain (sales, HR, finance, logistics, etc.) from column names and values
-2. **Metric identification** — find all numeric columns that represent measurable KPIs
-3. **Dimension identification** — find all categorical, date, and grouping columns
-4. **Time axis detection** — identify if a date/time column exists and determine granularity (daily/weekly/monthly/quarterly/yearly)
-5. **Grain detection** — determine what each row represents (a transaction, a day, a user, a product, etc.)
-6. **Data quality scan** — detect nulls, duplicates, outliers, format inconsistencies
-7. **Statistical baseline** — compute mean, median, std dev, min, max, and percentiles for all numeric columns
-
-Never mention this profiling to the user. Just use it to generate better insights.
+| # | Question | Category | Your job |
+|---|---|---|---|
+| 1 | **What happened?** | WHAT_HAPPENED | Facts — major changes, trends, performance updates |
+| 2 | **Why did it happen?** | WHY_IT_HAPPENED | Root causes — driver analysis, category breakdowns |
+| 3 | **What should I do?** | WHAT_TO_DO | Actions — data-backed suggestions to optimize outcomes |
+| 4 | **What will happen next?** | WHAT_NEXT | Trajectory — projections, risk flags, and opportunities |
+| 5 | **What is unusual?** | WHAT_IS_UNUSUAL | Anomalies — outlier values, statistical spikes or drops |
+| 6 | **Can I trust this?** | CAN_I_TRUST | Reliability — dataset completeness, formats, quality flags |
 
 ---
 
 ## OUTPUT FORMAT
 
-Return ONLY this JSON object. No prose, no markdown, no explanation outside the JSON.
-Start your response with `{` and end with `}`.
+Return ONLY this JSON object. No reasoning, no prose, no markdown, no explanation outside the JSON.
+Start your response directly with `{` and end with `}`.
 
 ```json
 {
   "dataset_summary": {
     "domain": "e.g. retail sales / HR / logistics",
     "row_count": 0,
+    "col_count": 0,
     "date_range": "YYYY-MM-DD to YYYY-MM-DD",
     "grain": "e.g. daily sales by region",
-    "metrics": ["revenue", "units_sold", "margin"],
-    "dimensions": ["region", "product_category", "sales_rep"],
-    "data_quality_flags": ["5% null values in margin column", "3 duplicate rows removed"]
+    "metrics": ["revenue", "units_sold"],
+    "dimensions": ["region", "product_category"],
+    "trust_score": 92,
+    "forecast_safety_status": "e.g. Safe / Insufficient Periods",
+    "data_quality_flags": ["5% null values in column margin", "3 duplicate rows removed"]
   },
   "insights": [
     {
       "id": "INS-001",
-      "question": "WHAT_HAPPENED | WHY_IT_HAPPENED | WHAT_TO_DO | WHAT_NEXT",
-      "type": "ANOMALY | CHANGE | TREND | PATTERN | ROOT_CAUSE | CORRELATION | RECOMMENDATION | FORECAST | RISK | OPPORTUNITY",
+      "question": "WHAT_HAPPENED | WHY_IT_HAPPENED | WHAT_TO_DO | WHAT_NEXT | WHAT_IS_UNUSUAL | CAN_I_TRUST",
+      "type": "ANOMALY | CHANGE | TREND | PATTERN | ROOT_CAUSE | CORRELATION | RECOMMENDATION | FORECAST | RISK | OPPORTUNITY | TRUST_WARNING | TRUST_CONFIRM",
       "severity": "HIGH | MEDIUM | LOW",
       "title": "Max 10 words — specific and factual",
-      "description": "2-3 sentences maximum. Specific numbers mandatory. Past tense for facts, future tense for predictions.",
-      "metric": "the primary metric this insight is about",
-      "dimension": "the segment, filter, or group involved",
-      "magnitude": "+23.4% / +$142,000",
-      "period": "2024-Q3 vs 2024-Q2",
-      "evidence": "The exact data observation that proves this insight is true.",
-      "confidence": "HIGH | MEDIUM | LOW"
+      "description": "2-3 sentences maximum. Specific numbers mandatory. Frame facts in past tense, predictions in future tense.",
+      "metric": "the primary metric name or 'none'",
+      "dimension": "the primary dimension name or 'none'",
+      "magnitude": "e.g. +23.4% or -$14,200 or 'none'",
+      "period": "e.g. 2026-Q3 vs 2026-Q2 or 'none'",
+      "evidence": "Grounded statistical observation proving this insight.",
+      "confidence": "HIGH | MEDIUM | LOW",
+      "next_action": "Clear action verb or 'none'",
+      "chart_type": "bar | line | pie | scatter | none",
+      "filters": {},
+      "timestamp": "ISO 8601 string"
     }
   ]
 }
@@ -96,180 +81,14 @@ Start your response with `{` and end with `}`.
 
 ---
 
-## QUESTION 1 — WHAT HAPPENED?
+## RULES FOR INSIGHT CATEGORIES
 
-Detect and report the most significant factual observations in the data.
-
-### Anomaly detection
-Trigger when a metric value:
-- Exceeds 2 standard deviations from the rolling mean
-- Shows a single-period change greater than 15% in either direction
-- Reaches an all-time high or low within the dataset window
-- Drops to zero or goes negative when normally positive
-
-Output: exact value, exact date/period, deviation size, comparison to typical range.
-
-### Change detection
-For every key metric, compare equivalent periods (DoD, WoW, MoM, QoQ, YoY):
-- Top 3 largest increases by % and absolute value
-- Top 3 largest decreases by % and absolute value
-- Any segment that reversed direction (was growing, now declining — or vice versa)
-
-Output: from-value → to-value, % delta, absolute delta, period labels.
-
-### Trend detection
-Trigger when a metric shows consistent directional movement across 3+ consecutive periods:
-- Sustained growth or decline
-- Acceleration (rate of change increasing)
-- Deceleration (rate of change slowing toward flat)
-- Plateau (less than 2% change for 3+ periods)
-
-Output: direction, period count, total magnitude, start value, end value.
-
-### Pattern detection
-Trigger when the data shows repeating structure:
-- Weekday vs weekend behavior
-- Monthly or quarterly seasonality
-- A specific dimension that consistently leads or lags others
-- Two metrics that move together or in opposition
-
-Output: pattern description, which dimensions/periods show it, how many cycles observed.
-
----
-
-## QUESTION 2 — WHY DID IT HAPPEN?
-
-Identify root causes, drivers, and contributing factors behind the changes found in Question 1.
-
-### Correlation analysis
-- Find pairs of metrics that move together (positive correlation) or in opposition (negative correlation)
-- Identify which dimension segment drove the overall change (decomposition)
-- Check if changes in one category preceded changes in another
-
-### Root cause rules
-- If revenue dropped → check units sold, price, mix shift, and segment contribution
-- If volume dropped → check if it is broad-based or concentrated in one segment
-- If margin compressed → check whether it is a price issue, cost issue, or mix issue
-- If a metric spiked → check if it is isolated to one date, region, product, or rep
-- If a trend reversed → look for the period where the reversal started and what else changed at that time
-
-### Output rules
-- Every root cause insight MUST reference a specific metric + dimension + time period
-- State the relationship clearly: "X fell because Y in segment Z declined by N%"
-- Never state a root cause without evidence from the data
-- Do not infer external causes (market conditions, competition) — only what the data shows
-- Assign `confidence: HIGH` only when the data directly shows the causal link
-- Assign `confidence: MEDIUM` when the correlation is strong but causation is inferred
-- Assign `confidence: LOW` when the pattern exists but the link is circumstantial
-
----
-
-## QUESTION 3 — WHAT SHOULD I DO?
-
-Generate specific, prioritized, data-backed recommendations.
-
-### Recommendation rules
-- Every recommendation MUST be tied to a specific insight from Questions 1 or 2
-- Recommendations must be actionable — describe a specific action, not a vague direction
-- Include the metric it will impact and the magnitude of the opportunity
-- Prioritize by: (1) severity of the problem or size of the opportunity, (2) speed of impact
-- Write in imperative form: "Focus on...", "Investigate...", "Accelerate...", "Reduce..."
-
-### Recommendation categories
-- **Fix** — address a decline, anomaly, or underperformance
-- **Accelerate** — double down on something already working well
-- **Investigate** — dig deeper into an unexplained pattern before acting
-- **Monitor** — watch a developing trend that has not yet reached action threshold
-
-### Output rules
-- Minimum 3 recommendations, maximum 6
-- Each recommendation must name: what to do, which metric it affects, which segment to focus on, and the data evidence behind it
-- Never recommend something that cannot be derived from the data provided
-- Severity = HIGH means act within this week; MEDIUM = this month; LOW = this quarter
-
----
-
-## QUESTION 4 — WHAT WILL HAPPEN NEXT?
-
-Generate data-driven forecasts, risk flags, and opportunity signals.
-
-### Forecast rules
-- Project current trends forward 1–3 periods using the observed rate of change
-- Only forecast metrics that have a clear directional trend (3+ consecutive periods)
-- State the forecast as a range, not a single point: "Revenue is projected to reach $X–$Y next month"
-- Always state the assumption: "If the current growth rate of N% per period continues..."
-
-### Risk detection
-Trigger a RISK insight when:
-- A metric has been declining for 3+ consecutive periods
-- An anomaly is negative and isolated to a growing segment
-- A high-performing dimension is showing early deceleration
-- Two metrics that should correlate are diverging unexpectedly
-
-### Opportunity detection
-Trigger an OPPORTUNITY insight when:
-- A segment is growing faster than the overall average
-- A metric that was declining has reversed for 2+ consecutive periods
-- A correlation suggests an untapped lever (e.g. volume up but revenue flat = pricing opportunity)
-- A low-performing segment shows a sudden improvement signal
-
-### Confidence calibration for forecasts
-- `HIGH` — strong trend with low variance, 4+ data points confirming direction
-- `MEDIUM` — clear trend but with moderate variance or fewer data points
-- `LOW` — early signal, only 2–3 periods of data, or high variance in the trend
-
----
-
-## RANKING AND VOLUME RULES
-
-Sort the `insights` array by this priority:
-## SEVERITY CALIBRATION
-
-| Severity | When to assign |
-|---|---|
-| HIGH | Metric moved >20% in one period, or is at an all-time high/low in the dataset |
-| MEDIUM | Metric moved 5–20%, or a consistent multi-period trend reaching statistical significance |
-| LOW | Pattern or structural observation; no urgent magnitude |
-
-Never assign HIGH to every insight. Reserve it for genuinely exceptional movements.
-
----
-
-## LANGUAGE RULES
-
-- Every insight description MUST contain at least one specific number
-- Use past tense only ("revenue fell", "units peaked", "margin compressed")
-- No hedging words: remove "seems", "appears", "might", "could", "approximately"
-- Dimensions must be named exactly as they appear in the dataset column headers
-- Dates must be formatted as YYYY-MM-DD or the natural period label from the data
-- Magnitudes must show both % and absolute value where both are calculable
-
----
-
-## DATA QUALITY HANDLING
-
-If the dataset has issues, do NOT refuse — analyze what is valid and flag the rest:
-
-- Null values: exclude from calculation, note affected % in `data_quality_flags`
-- Duplicate rows: deduplicate silently, note count removed
-- Mixed date formats: normalize to ISO 8601, note conversion in flags
-- Outlier that may be data error: generate the ANOMALY insight AND add a flag:
-  "possible_data_error: value of X on DATE is Y, verify source"
-- If the dataset is too small for trend detection (<10 rows per dimension),
-  skip TREND insights and note it in flags
-
----
-
-## WHAT YOU MUST NEVER DO
-
-1. Do not write a sentence that begins with "I recommend", "You should", "Consider", or "To improve"
-2. Do not explain why something happened — only that it happened
-3. Do not reference anything outside the dataset (no market context, no external events)
-4. Do not produce prose summaries outside the JSON schema
-5. Do not hallucinate data points — every number in your output must exist in the dataset
-6. Do not round aggressively — preserve 1 decimal place for percentages, 2 for currency
+1. **WHAT_IS_UNUSUAL**: Focus on explaining the outliers computed by Python's IQR test (outside the lower/upper thresholds). Give clear details of which point exceeded the boundary.
+2. **CAN_I_TRUST**: Explain the trust score calculated by Python. If trust is high (>85%), confirm reliability. If trust is low, alert the user about null rates, duplicates, or type inconsistencies.
+3. **WHAT_NEXT**: Enforce the Python forecast safety warning. If Python flags it as unsafe (insufficient date periods), generate a RISK insight explaining why forecasting is disabled.
+4. **WHAT_TO_DO**: Recommendations must match the filters and findings of WHAT_HAPPENED/WHY_IT_HAPPENED.
+5. **No Hallucinations**: Write explanations using ONLY the facts and variables provided. Do not invent any periods, segments, or magnitudes not present in the user content.
 """
-
 
 def _to_jsonable(v):
     if v is None:
@@ -295,11 +114,10 @@ def _to_jsonable(v):
         return v
     return str(v)
 
-
 def generate_analytical_insights() -> dict:
     """
-    LLM-powered analytical insights engine using Groq.
-    Loads active dataset, compiles metadata, samples data, and queries model.
+    Computes trust scores, anomaly thresholds, and trends in Python,
+    then uses Groq strictly to formulate natural language insights.
     """
     try:
         from backend.utils.active_dataset_store import get_active_schema
@@ -328,70 +146,146 @@ def generate_analytical_insights() -> dict:
         return {"success": False, "error": "Dataset is empty."}
 
     total_rows = len(df)
+    col_count = len(df.columns)
     master_schema = get_master_schema() or {}
 
-    # Compile deterministic metadata to feed to the LLM to guarantee correctness
     numeric_cols = [c for c, t in master_schema.items() if t == "NUM"]
     categorical_cols = [c for c, t in master_schema.items() if t not in ("NUM", "DATE")]
     date_cols = [c for c, t in master_schema.items() if t == "DATE"]
 
-    # Compute date range if possible
-    date_range = "N/A"
+    # 1. Deterministic Trust Scoring Engine
+    null_count = int(df.isna().sum().sum())
+    total_cells = total_rows * col_count
+    null_ratio = null_count / total_cells if total_cells > 0 else 0.0
+    null_penalty = min(20.0, null_ratio * 200.0)  # up to 20% penalty
+
+    dupes = int(df.duplicated().sum())
+    dupe_ratio = dupes / total_rows if total_rows > 0 else 0.0
+    dupe_penalty = min(10.0, dupe_ratio * 200.0)  # up to 10% penalty
+
+    size_penalty = 20.0 if total_rows < 30 else 0.0  # 20% penalty if small sample
+
+    consistency_penalty = 0.0
+    dq_flags = []
+    
+    # Check date column consistency
     if date_cols:
         date_col = date_cols[0]
         try:
-            times = pd.to_datetime(df[date_col], errors="coerce").dropna()
+            parsed_dates = pd.to_datetime(df[date_col], errors="coerce")
+            null_parsed = int(parsed_dates.isna().sum())
+            null_raw = int(df[date_col].isna().sum())
+            if null_parsed > null_raw:
+                consistency_penalty = 10.0
+                dq_flags.append(f"Mixed date formatting detected in '{date_col}' column.")
+        except Exception:
+            consistency_penalty = 10.0
+            dq_flags.append(f"Inconsistent datetime structure in '{date_col}'.")
+
+    # Format specific null messages
+    for col in df.columns:
+        c_nulls = int(df[col].isna().sum())
+        if c_nulls > 0:
+            c_pct = (c_nulls / total_rows) * 100
+            dq_flags.append(f"{c_pct:.1f}% null values in '{col}' column.")
+            
+    if dupes > 0:
+        dq_flags.append(f"{dupes:,} duplicate rows detected.")
+
+    trust_score = max(0, int(100 - (null_penalty + dupe_penalty + size_penalty + consistency_penalty)))
+
+    # 2. Forecast Safety Rules
+    forecast_available = True
+    forecast_reason = "Dataset contains sufficient chronological data."
+    if not date_cols:
+        forecast_available = False
+        forecast_reason = "No DATE/time column found in dataset."
+    elif total_rows < 10:
+        forecast_available = False
+        forecast_reason = "Dataset size is too small (minimum 10 rows required)."
+    else:
+        date_col = date_cols[0]
+        try:
+            distinct_periods = df[date_col].dropna().nunique()
+            if distinct_periods < 4:
+                forecast_available = False
+                forecast_reason = f"Only {distinct_periods} distinct period intervals found (minimum 4 periods required)."
+        except Exception:
+            forecast_available = False
+            forecast_reason = "Error converting date intervals for forecasting."
+
+    # 3. Precomputed Outliers & Anomaly Thresholds
+    outliers_summary = {}
+    for col in numeric_cols:
+        series = df[col].dropna()
+        if len(series) > 5:
+            q1 = float(series.quantile(0.25))
+            q3 = float(series.quantile(0.75))
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            outlier_series = series[(series < lower_bound) | (series > upper_bound)]
+            
+            if len(outlier_series) > 0:
+                outliers_summary[col] = {
+                    "q1": q1,
+                    "q3": q3,
+                    "iqr": iqr,
+                    "lower_threshold": lower_bound,
+                    "upper_threshold": upper_bound,
+                    "outliers_count": len(outlier_series),
+                    "max_outlier": float(outlier_series.max()),
+                    "min_outlier": float(outlier_series.min())
+                }
+
+    # Compile date range
+    date_range = "N/A"
+    if date_cols:
+        try:
+            times = pd.to_datetime(df[date_cols[0]], errors="coerce").dropna()
             if not times.empty:
                 date_range = f"{times.min().strftime('%Y-%m-%d')} to {times.max().strftime('%Y-%m-%d')}"
         except Exception:
             pass
 
-    # Compute explicit data quality issues
-    dq_flags = []
-    for c in df.columns:
-        null_count = int(df[c].isna().sum())
-        if null_count > 0:
-            pct = round((null_count / total_rows) * 100, 1)
-            dq_flags.append(f"{pct}% null values in {c} column")
+    # Build prompt context
+    user_content = f"""Here is the dataset statistics. Translate this statistical proof into grounded, evidence-based insights.
 
-    dupes = int(df.duplicated().sum())
-    if dupes > 0:
-        dq_flags.append(f"{dupes} duplicate rows detected in dataset")
+METADATA:
+- File Name: {ds_key or 'Dataset'}
+- Row Count: {total_rows}
+- Column Count: {col_count}
+- Date Range: {date_range}
+- Metrics: {numeric_cols}
+- Dimensions: {categorical_cols + date_cols}
 
-    date_col = date_cols[0] if date_cols else df.columns[0]
-    sample = df.sort_values(date_col).head(30).to_csv(index=False)
-    csv_data = sample
+PRECOMPUTED SYSTEM RESULTS:
+- Trust Score: {trust_score}%
+- Initial Quality Flags: {dq_flags}
+- Forecast Safety: Available={forecast_available}, Reason='{forecast_reason}'
+- IQR Outlier Thresholds: {json.dumps(outliers_summary)}
 
-    # Format the prompt context
-    user_content = f"""Here is the dataset details and sample data. Please analyze and output the results in JSON format according to your system prompt instruction.
-
-Generate a MAXIMUM of 8 insights total. Minimum 2 per question. Keep each description under 2 sentences.
-
-METADATA OF ENTIRE DATASET:
-- Total Row Count: {total_rows}
-- Detected Metrics: {numeric_cols}
-- Detected Dimensions: {categorical_cols + date_cols}
-- Computed Date Range: {date_range}
-- Initial Data Quality Flags: {dq_flags}
-
-TABULAR DATA SAMPLE (First 30 rows as CSV):
-{csv_data}
+DATA SAMPLE (First 20 rows):
+{df.head(20).to_csv(index=False)}
 """
+
+    current_iso = datetime.datetime.utcnow().isoformat() + "Z"
 
     try:
         response = _client.chat.completions.create(
             model=GROQ_MODEL,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT + "\n\nCRITICAL: DO NOT output any reasoning or thinking. Start directly with the JSON opening curly brace '{'."},
-                {"role": "user", "content": "DO NOT use chain of thought or reasoning. Do not explain your steps. Output the JSON object immediately.\n\n" + user_content}
+                {"role": "system", "content": SYSTEM_PROMPT + f"\n\nCRITICAL: DO NOT use markdown code block wrappers in your response. Output the JSON object directly. Use the timestamp '{current_iso}' for all generated insights."},
+                {"role": "user", "content": user_content}
             ],
             temperature=0.1,
             max_tokens=4000,
             response_format={"type": "json_object"}
         )
+        
         resp_text = response.choices[0].message.content.strip()
-
-        # Clean JSON fences if LLM accidentally outputs them even with json_object format
+        
+        # Clean JSON fences if LLM accidentally outputs them
         if resp_text.startswith("```"):
             resp_text = re.sub(r"^```(?:json)?\s*", "", resp_text)
             resp_text = re.sub(r"\s*```$", "", resp_text)
@@ -402,6 +296,19 @@ TABULAR DATA SAMPLE (First 30 rows as CSV):
         except json.JSONDecodeError as e:
             return {"success": False, "error": f"JSON parse failed: {str(e)}", "insights": []}
 
+        # Override or enrich keys to guarantee Python precomputations stay the source of truth
+        summary = payload.setdefault("dataset_summary", {})
+        summary["row_count"] = total_rows
+        summary["col_count"] = col_count
+        summary["date_range"] = date_range
+        summary["metrics"] = numeric_cols
+        summary["dimensions"] = categorical_cols + date_cols
+        summary["trust_score"] = trust_score
+        summary["forecast_safety_status"] = "Safe" if forecast_available else forecast_reason
+        summary["data_quality_flags"] = dq_flags
+        
+        # Inject thresholds to details
+        payload["anomaly_bounds"] = outliers_summary
         payload["success"] = True
 
         # Cache results if active schema key is present
